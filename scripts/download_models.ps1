@@ -17,7 +17,7 @@ $files = @(
     },
     @{
         Name = "ppocr_keys_v1.txt"
-        Url  = "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt"
+        Url  = "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt"
     }
 )
 

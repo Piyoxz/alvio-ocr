@@ -113,14 +113,23 @@ impl OcrEngine {
         debug!("Fetching OCR image from URL: {}", url);
         let resp = ureq::get(url)
             .set("User-Agent", concat!("alvio-ocr/", env!("CARGO_PKG_VERSION")))
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(self.config.url_timeout_secs))
             .call()
             .map_err(|e| OcrError::Network(format!("Failed to fetch '{}': {}", url, e)))?;
 
+        let max_bytes = self.config.max_url_download_size;
+        let mut reader = resp.into_reader().take(max_bytes + 1);
         let mut bytes = Vec::new();
-        resp.into_reader()
+        reader
             .read_to_end(&mut bytes)
             .map_err(|e| OcrError::Network(format!("Failed to read body from '{}': {}", url, e)))?;
+
+        if bytes.len() as u64 > max_bytes {
+            return Err(OcrError::ImageTooLarge(format!(
+                "URL response exceeded download limit of {} MB",
+                max_bytes / (1024 * 1024)
+            )));
+        }
 
         self.recognize_bytes(&bytes)
     }
@@ -128,6 +137,14 @@ impl OcrEngine {
     pub fn recognize_file(&self, path: impl AsRef<Path>) -> Result<OcrResult, OcrError> {
         let path_ref = path.as_ref();
         validate_file_path(path_ref)?;
+        let metadata = std::fs::metadata(path_ref)?;
+        if metadata.len() > self.config.max_file_size {
+            return Err(OcrError::ImageTooLarge(format!(
+                "File size ({} MB) exceeds maximum allowed size ({} MB)",
+                metadata.len() / (1024 * 1024),
+                self.config.max_file_size / (1024 * 1024)
+            )));
+        }
         let bytes = std::fs::read(path_ref)?;
         self.recognize_bytes(&bytes)
     }
@@ -208,6 +225,14 @@ impl OcrEngine {
     }
 
     pub fn recognize_bytes(&self, bytes: &[u8]) -> Result<OcrResult, OcrError> {
+        if bytes.len() as u64 > self.config.max_file_size {
+            return Err(OcrError::ImageTooLarge(format!(
+                "Payload size ({} MB) exceeds maximum allowed size ({} MB)",
+                bytes.len() / (1024 * 1024),
+                self.config.max_file_size / (1024 * 1024)
+            )));
+        }
+
         let format = detect_format(bytes)?;
 
         match format {

@@ -13,7 +13,7 @@ pub const REC_MODEL_URL: &str =
     "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx";
 
 pub const DICT_URL: &str =
-    "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt";
+    "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt";
 
 pub fn cache_dir() -> PathBuf {
     if let Ok(val) = std::env::var("ALVIO_OCR_CACHE") {
@@ -184,9 +184,13 @@ pub fn ensure_models(model_dir: &Path, _lang: OcrLanguage) -> Result<(), OcrErro
         download_file(REC_MODEL_URL, &rec_path)?;
     }
 
-    let dict_path = model_dir.join("ppocr_keys_v1.txt");
-    if !dict_path.exists() {
-        download_file(DICT_URL, &dict_path)?;
+    let dict_v6 = model_dir.join("ppocrv6_keys.txt");
+    if !dict_v6.exists() {
+        let _ = fs::write(&dict_v6, crate::recognizer::EMBEDDED_DICT);
+    }
+    let dict_v1 = model_dir.join("ppocr_keys_v1.txt");
+    if !dict_v1.exists() {
+        let _ = fs::write(&dict_v1, crate::recognizer::EMBEDDED_DICT);
     }
 
     Ok(())

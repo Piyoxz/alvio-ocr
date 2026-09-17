@@ -16,6 +16,8 @@ use std::{
 };
 use tracing::info;
 
+pub const EMBEDDED_DICT: &str = include_str!("ppocrv6_keys.txt");
+
 pub struct TextRecognizer {
     session: Mutex<Session>,
     dictionary: Vec<String>,
@@ -34,16 +36,21 @@ impl TextRecognizer {
             )));
         }
 
-        if !dict_path.exists() {
-            return Err(OcrError::ModelNotFound(format!(
-                "Dictionary not found at: {:?}. Run scripts/download_models.ps1 or .sh",
-                dict_path
-            )));
-        }
-
-        let dict_file = File::open(dict_path)?;
-        let reader = BufReader::with_capacity(32768, dict_file);
-        let dictionary: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+        let dictionary: Vec<String> = if dict_path.exists() {
+            let dict_file = File::open(dict_path)?;
+            let reader = BufReader::with_capacity(32768, dict_file);
+            reader.lines().filter_map(|l| l.ok()).collect()
+        } else if let Some(parent) = dict_path.parent() {
+            if parent.join("ppocrv6_keys.txt").exists() {
+                let dict_file = File::open(parent.join("ppocrv6_keys.txt"))?;
+                let reader = BufReader::with_capacity(32768, dict_file);
+                reader.lines().filter_map(|l| l.ok()).collect()
+            } else {
+                EMBEDDED_DICT.lines().map(|s| s.to_string()).collect()
+            }
+        } else {
+            EMBEDDED_DICT.lines().map(|s| s.to_string()).collect()
+        };
         info!("Loaded {} characters into dictionary.", dictionary.len());
 
         let (intra, inter) = config.resolve_threads();

@@ -9,7 +9,7 @@ mkdir -p "$MODELS_DIR"
 FILES=(
     "PP-OCRv6_det_small.onnx|https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx"
     "PP-OCRv6_rec_small.onnx|https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx"
-    "ppocr_keys_v1.txt|https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt"
+    "ppocr_keys_v1.txt|https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt"
 )
 
 for entry in "${FILES[@]}"; do

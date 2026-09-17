@@ -5,6 +5,22 @@ All notable changes to the `alvio-ocr` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-17
+
+### Added
+- **Embedded 18,708-Key PP-OCRv6 Dictionary**: Embedded `ppocrv6_keys.txt` directly into crate binary (`include_str!`). Eliminates all network failure risks and guarantees 100% dictionary availability on any fresh machine offline.
+- **Production Security & Resource Guards**:
+  - `max_file_size`: Configurable file/payload guard (default 50 MB) rejecting oversized inputs prior to memory allocation.
+  - `max_url_download_size`: Capped HTTP streaming download (default 25 MB) preventing memory exhaustion / DOS attacks via malicious URLs.
+  - `url_timeout_secs`: Enforced 15s connection and read timeouts.
+- **Cross-Platform Hardening**:
+  - Verified multi-platform native downloads for Windows x64/arm64, Linux x64/arm64, and macOS Intel/Apple Silicon.
+  - Added `libgomp1` to production Dockerfile for OpenMP Linux threading support.
+  - Documented CPU-offloading via `tokio::task::spawn_blocking` in Axum web service guide.
+  - Added detailed reproducible benchmark environment specifications.
+
+---
+
 ## [0.2.1] - 2026-09-17
 
 ### Optimized

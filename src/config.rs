@@ -129,6 +129,10 @@ pub struct OcrConfig {
     pub max_image_width: u32,
     pub max_image_height: u32,
 
+    pub max_file_size: u64,
+    pub max_url_download_size: u64,
+    pub url_timeout_secs: u64,
+
     pub pdfium_path: Option<PathBuf>,
     pub max_pdf_pages: usize,
     pub pdf_embedded_img_min_area: u32,
@@ -190,6 +194,10 @@ impl OcrConfig {
 
             max_image_width: 4096,
             max_image_height: 4096,
+
+            max_file_size: 50 * 1024 * 1024,
+            max_url_download_size: 25 * 1024 * 1024,
+            url_timeout_secs: 15,
 
             pdfium_path: None,
             max_pdf_pages: 50,
@@ -306,6 +314,21 @@ impl OcrConfig {
 
     pub fn max_image_height(mut self, val: u32) -> Self {
         self.max_image_height = val;
+        self
+    }
+
+    pub fn max_file_size(mut self, bytes: u64) -> Self {
+        self.max_file_size = bytes;
+        self
+    }
+
+    pub fn max_url_download_size(mut self, bytes: u64) -> Self {
+        self.max_url_download_size = bytes;
+        self
+    }
+
+    pub fn url_timeout_secs(mut self, secs: u64) -> Self {
+        self.url_timeout_secs = secs;
         self
     }
 
