@@ -267,6 +267,7 @@ impl OcrEngine {
                         dimensions: first_dims,
                         format: DocumentFormat::Pdf,
                         duration_ms: start.elapsed().as_millis() as u64,
+                        timing: crate::profiling::StageTiming::default(),
                     })
                 }
 
@@ -452,7 +453,7 @@ impl OcrEngine {
             let processed_img = if config.enhancement_enabled {
                 enhance_if_needed(img, config.enhancement_variance_threshold)
             } else {
-                img.clone()
+                std::borrow::Cow::Borrowed(img)
             };
 
             let regions = detector.detect(&processed_img)?;
