@@ -3,13 +3,14 @@
 High-performance OCR library for Rust, powered by ONNX Runtime and PP-OCRv6. Built for extreme speed, high accuracy, and zero-configuration ergonomics.
 
 > [!NOTE]
-> ### 🚀 What's New in v0.2.0
-> - 📄 **Document AI Suite**: Built-in intelligent schemas for e-KTP (`to_ktp()`), Receipt/Invoices (`to_receipt()`), 2D Grid Table reconstruction (`to_table()`), and Key-Value forms (`to_key_values()`).
-> - 🔄 **Orientation & Deskew**: Radon/projection profile skew detection (-45° to +45°) with bilinear deskewing and orthogonal rotation correction.
-> - 🎯 **Confidence-based 2nd Pass**: Intelligent selective re-OCR with contrast enhancement and sharpening on low-confidence regions.
-> - ⏱️ **Stage Latency Profiler**: Granular `StageTiming` capturing preprocessing, detection, crop, recognition, and postprocessing latency with P50/P95/P99 analytics.
-> - 📊 **Accuracy Evaluation**: Integrated Character Error Rate (CER) and Word Error Rate (WER) calculation utilities.
-> - ⚡ **GPU Features**: Optional `cuda` and `directml` acceleration targets.
+> ### 🚀 What's New in v0.2.2
+> - 📦 **Embedded 18,708-Key Dictionary**: Built-in 50-language PP-OCRv6 dictionary compiled directly into the binary — 100% offline reliability on any fresh machine with zero 404 download errors.
+> - 🛡️ **Production Security Guards**: Built-in guards against DOS and memory exhaustion (`max_file_size`, `max_url_download_size`, `url_timeout_secs`).
+> - ⚡ **Zero-Copy Performance**: `Cow<'a, DynamicImage>` image borrowing, zero-copy FIR resizing, and tuned threadpool returning execution latency to **~85 ms**.
+> - 📄 **Document AI Suite**: Out-of-the-box parsing for e-KTP (`to_ktp()`), Receipts/Invoices (`to_receipt()`), 2D Table grids (`to_table()`), and Key-Values (`to_key_values()`).
+> - 🔄 **Orientation & Deskew**: Automatic skew tilt angle detection (-45° to +45°) and bilinear deskew correction.
+> - ⏱️ **Stage Profiling**: Granular nanosecond `StageTiming` profiler breakdown.
+> - 🌐 **Cross-Platform Hardened**: Verified for Windows, Linux (with `libgomp1`), and macOS (Apple Silicon + Intel).
 
 ## Key Features
 
