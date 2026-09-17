@@ -3,7 +3,7 @@
 High-performance OCR library for Rust, powered by ONNX Runtime and PP-OCRv6. Built for extreme speed, high accuracy, and zero-configuration ergonomics.
 
 > [!NOTE]
-> ### 🚀 What's New in v0.2.2
+> ### 🚀 What's New in v0.2.3
 > - 📦 **Embedded 18,708-Key Dictionary**: Built-in 50-language PP-OCRv6 dictionary compiled directly into the binary — 100% offline reliability on any fresh machine with zero 404 download errors.
 > - 🛡️ **Production Security Guards**: Built-in guards against DOS and memory exhaustion (`max_file_size`, `max_url_download_size`, `url_timeout_secs`).
 > - ⚡ **Zero-Copy Performance**: `Cow<'a, DynamicImage>` image borrowing, zero-copy FIR resizing, and tuned threadpool returning execution latency to **~85 ms**.
@@ -30,14 +30,14 @@ Add this crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-alvio-ocr = "0.2.2"
+alvio-ocr = "0.2.3"
 ```
 
 To enable PDF document OCR, enable the `pdf` feature:
 
 ```toml
 [dependencies]
-alvio-ocr = { version = "0.2.2", features = ["pdf"] }
+alvio-ocr = { version = "0.2.3", features = ["pdf"] }
 ```
 
 ## Supported File Formats
@@ -80,7 +80,7 @@ println!("Supported formats: {:?}", supported);
 
 ## Supported Languages & Models
 
-`alvio-ocr` v0.2.2 uses a **unified PP-OCRv6 model** supporting 50 languages:
+`alvio-ocr` v0.2.3 uses a **unified PP-OCRv6 model** supporting 50 languages:
 
 | Language Preset | Code | Character Count | Underlying ONNX Model | Auto-Download |
 |---|---|---|---|---|

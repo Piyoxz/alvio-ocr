@@ -1,6 +1,6 @@
 [package]
 name = "alvio-ocr"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 authors = ["Alvio"]
 description = "High-performance OCR and Document AI library powered by ONNX Runtime (PP-OCRv6). Feature-complete with orientation deskew, confidence 2nd-pass re-OCR, KTP/receipt/table schemas, and per-stage profiling."
