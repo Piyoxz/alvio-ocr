@@ -80,7 +80,7 @@ println!("Supported formats: {:?}", supported);
 
 ## Supported Languages & Models
 
-`alvio-ocr` v0.1.3 uses a **unified PP-OCRv6 model** supporting 50 languages:
+`alvio-ocr` v0.2.2 uses a **unified PP-OCRv6 model** supporting 50 languages:
 
 | Language Preset | Code | Character Count | Underlying ONNX Model | Auto-Download |
 |---|---|---|---|---|
