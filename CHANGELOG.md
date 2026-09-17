@@ -5,6 +5,32 @@ All notable changes to the `alvio-ocr` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-17
+
+### Added
+- **Document AI Intelligent Schemas**:
+  - `KtpData` & `to_ktp()`: Automated Indonesian e-KTP field extraction (NIK, Nama, Tempat/Tgl Lahir, Alamat, Agama, Status, Pekerjaan, Kewarganegaraan) with specialized heuristic character typo sanitization (e.g. B->8, O->0 in NIK).
+  - `ReceiptData` & `to_receipt()`: Automated receipt & invoice parser with itemized lines, prices, merchant name, transaction date, and currency total detection.
+  - `TableData` & `to_table()`: Spatial 2D table & grid reconstructor with column/row alignment and direct `to_markdown()` generator.
+  - `KeyValuePair` & `to_key_values()`: Generic key-value extractor for structured form inspection.
+- **Orientation & Deskew Pipeline**:
+  - Radon/Projection profile skew detector measuring text tilt from -45° to +45°.
+  - Bilinear rotation deskew (`deskew_image`, `deskew_rgb`) and 90°/180°/270° orthogonal orientation correction.
+  - Configurable via `OcrConfig::with_deskew(true)`.
+- **Confidence-based 2nd-Pass Re-OCR**:
+  - Region-level second chance recognition for low-confidence detections below customizable threshold.
+  - Contrast stretching and sharpening preprocessing prior to re-inference.
+  - Configurable via `OcrConfig::with_second_pass(true, 0.75)`.
+- **Latency Profiler (`StageTiming`)**:
+  - Granular nanosecond tracking of Preprocessing, Detection, Crop, Recognition, and Postprocessing stages.
+  - Integrated into `OcrResult.timing` with formatted summary (`P50/P95/P99`).
+- **Benchmark Evaluation Suite**:
+  - Levenshtein distance metrics `compute_cer` (Character Error Rate) and `compute_wer` (Word Error Rate).
+- **GPU Acceleration Support**:
+  - Optional `cuda` and `directml` feature flags in `Cargo.toml`.
+
+---
+
 ## [0.1.3] - 2026-09-17
 
 ### Changed

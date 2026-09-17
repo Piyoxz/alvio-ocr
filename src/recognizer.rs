@@ -74,17 +74,8 @@ impl TextRecognizer {
         })
     }
 
-    pub fn recognize_region(
-        &self,
-        img: &DynamicImage,
-        region: &TextRegion,
-    ) -> Result<Option<OcrText>, OcrError> {
-        let crop = match self.crop_region(img, region) {
-            Some(c) => c,
-            None => return Ok(None),
-        };
-
-        let tensor = preprocess_recognition(&crop);
+    pub fn recognize_crop(&self, crop: &RgbImage) -> Result<(String, f32), OcrError> {
+        let tensor = preprocess_recognition(crop);
         let input_tensor = Tensor::from_array(tensor)
             .map_err(|e| OcrError::InferenceFailed(format!("Recognition tensor: {}", e)))?;
 
@@ -115,7 +106,20 @@ impl TextRecognizer {
         let num_classes = shape[2];
         let raw_slice = pred_view.as_slice().unwrap_or(&[]);
 
-        let (text, confidence) = self.decode_ctc(raw_slice, seq_len, num_classes);
+        Ok(self.decode_ctc(raw_slice, seq_len, num_classes))
+    }
+
+    pub fn recognize_region(
+        &self,
+        img: &DynamicImage,
+        region: &TextRegion,
+    ) -> Result<Option<OcrText>, OcrError> {
+        let crop = match self.crop_region(img, region) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let (text, confidence) = self.recognize_crop(&crop)?;
 
         if text.is_empty() || confidence < self.rec_threshold {
             return Ok(None);
@@ -216,7 +220,7 @@ impl TextRecognizer {
         Ok(results)
     }
 
-    fn crop_region(&self, img: &DynamicImage, region: &TextRegion) -> Option<RgbImage> {
+    pub fn crop_region(&self, img: &DynamicImage, region: &TextRegion) -> Option<RgbImage> {
         let (min_x, min_y, max_x, max_y) = region.aabb();
         let (img_w, img_h) = (img.width() as f32, img.height() as f32);
         let region_h = (max_y - min_y).max(1.0);

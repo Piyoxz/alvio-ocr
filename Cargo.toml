@@ -1,13 +1,13 @@
 [package]
 name = "alvio-ocr"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 authors = ["Alvio"]
-description = "High-performance OCR library powered by ONNX Runtime (PP-OCRv6). Optimized for speed (SIMD, batch inference, parallel processing) and accuracy (LCNetV4 backbone, unified 50-language recognition)."
+description = "High-performance OCR and Document AI library powered by ONNX Runtime (PP-OCRv6). Feature-complete with orientation deskew, confidence 2nd-pass re-OCR, KTP/receipt/table schemas, and per-stage profiling."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/piyoxz/alvio-ocr"
-keywords = ["ocr", "onnx", "text-recognition", "text-detection", "paddleocr"]
+keywords = ["ocr", "onnx", "text-recognition", "document-ai", "paddleocr"]
 categories = ["computer-vision", "text-processing"]
 exclude = [
     "models/*",
@@ -43,6 +43,8 @@ pdfium-render = { version = "0.8", optional = true }
 [features]
 default = []
 pdf = ["dep:pdfium-render"]
+cuda = ["ort/cuda"]
+directml = ["ort/directml"]
 
 [[example]]
 name = "simple_ocr"

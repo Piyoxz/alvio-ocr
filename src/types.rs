@@ -78,6 +78,11 @@ impl TextRegion {
         BoundingBox::new(min_x, min_y, max_x, max_y)
     }
 
+    pub fn center_x(&self) -> f32 {
+        let (min_x, _, max_x, _) = self.aabb();
+        (min_x + max_x) / 2.0
+    }
+
     pub fn center_y(&self) -> f32 {
         let (_, min_y, _, max_y) = self.aabb();
         (min_y + max_y) / 2.0
@@ -183,6 +188,8 @@ pub struct OcrResult {
     pub dimensions: (u32, u32),
     pub format: DocumentFormat,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub timing: crate::profiling::StageTiming,
 }
 
 impl OcrResult {
@@ -203,6 +210,7 @@ impl OcrResult {
             dimensions,
             format,
             duration_ms,
+            timing: crate::profiling::StageTiming::default(),
         }
     }
 
@@ -257,7 +265,24 @@ impl OcrResult {
             dimensions: self.dimensions,
             format: self.format,
             duration_ms: self.duration_ms,
+            timing: self.timing,
         }
+    }
+
+    pub fn to_ktp(&self) -> crate::schema::KtpData {
+        crate::schema::ktp::extract_ktp_from_lines(&self.lines)
+    }
+
+    pub fn to_receipt(&self) -> crate::schema::ReceiptData {
+        crate::schema::receipt::extract_receipt_from_lines(&self.lines)
+    }
+
+    pub fn to_table(&self) -> crate::schema::TableData {
+        crate::schema::table::reconstruct_table(self.regions.clone())
+    }
+
+    pub fn to_key_values(&self) -> Vec<crate::schema::KeyValuePair> {
+        crate::schema::key_value::extract_key_values(&self.lines)
     }
 
     pub fn search(&self, query: &str) -> Vec<&OcrText> {

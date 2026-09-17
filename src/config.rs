@@ -119,6 +119,10 @@ pub struct OcrConfig {
     pub enhancement_enabled: bool,
     pub enhancement_variance_threshold: f32,
 
+    pub deskew_enabled: bool,
+    pub second_pass_enabled: bool,
+    pub second_pass_threshold: f32,
+
     pub intra_threads: usize,
     pub inter_threads: usize,
 
@@ -176,6 +180,10 @@ impl OcrConfig {
 
             enhancement_enabled: true,
             enhancement_variance_threshold: 1500.0,
+
+            deskew_enabled: true,
+            second_pass_enabled: true,
+            second_pass_threshold: 0.65,
 
             intra_threads: 0,
             inter_threads: 0,
@@ -263,6 +271,21 @@ impl OcrConfig {
 
     pub fn enhancement_variance_threshold(mut self, val: f32) -> Self {
         self.enhancement_variance_threshold = val;
+        self
+    }
+
+    pub fn deskew_enabled(mut self, enabled: bool) -> Self {
+        self.deskew_enabled = enabled;
+        self
+    }
+
+    pub fn second_pass_enabled(mut self, enabled: bool) -> Self {
+        self.second_pass_enabled = enabled;
+        self
+    }
+
+    pub fn second_pass_threshold(mut self, val: f32) -> Self {
+        self.second_pass_threshold = val;
         self
     }
 

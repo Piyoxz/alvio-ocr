@@ -242,6 +242,7 @@ impl OcrEngine {
                 })
             }
             _ => {
+                let parse_start = Instant::now();
                 let reader = ImageReader::new(Cursor::new(bytes))
                     .with_guessed_format()
                     .map_err(|e| OcrError::InvalidImage(format!("Parse image format: {}", e)))?;
@@ -249,6 +250,7 @@ impl OcrEngine {
                 let img = reader
                     .decode()
                     .map_err(|e| OcrError::InvalidImage(format!("Decode image: {}", e)))?;
+                let parsing_ms = parse_start.elapsed().as_secs_f32() * 1000.0;
 
                 let (w, h) = img.dimensions();
                 if w == 0 || h == 0 {
@@ -263,6 +265,9 @@ impl OcrEngine {
 
                 let mut res = self.recognize_image(&img)?;
                 res.format = format;
+                res.timing.parsing_ms = parsing_ms;
+                res.timing.total_ms += parsing_ms;
+                res.duration_ms = res.timing.total_ms.round() as u64;
                 Ok(res)
             }
         }
@@ -273,17 +278,38 @@ impl OcrEngine {
         if w == 0 || h == 0 {
             return Err(OcrError::InvalidImage("Image has zero width or height".to_string()));
         }
-        let start = Instant::now();
+        let total_start = Instant::now();
         debug!("OCR on image ({}x{})...", w, h);
 
-        let processed_img = if self.config.enhancement_enabled {
+        let pre_start = Instant::now();
+        let mut processed_img = if self.config.enhancement_enabled {
             enhance_if_needed(img, self.config.enhancement_variance_threshold)
         } else {
             img.clone()
         };
+        let preprocessing_ms = pre_start.elapsed().as_secs_f32() * 1000.0;
 
-        let regions = self.detector.detect(&processed_img)?;
+        let det_start = Instant::now();
+        let mut regions = self.detector.detect(&processed_img)?;
+        let mut detection_ms = det_start.elapsed().as_secs_f32() * 1000.0;
         debug!("Detected {} text regions", regions.len());
+
+        let orient_start = Instant::now();
+        let mut orientation_ms = 0.0f32;
+        if self.config.deskew_enabled && !regions.is_empty() {
+            let skew_angle = crate::orientation::detect_skew_angle(&regions);
+            if skew_angle.abs() >= 1.5 {
+                processed_img = crate::orientation::deskew_image(&processed_img, skew_angle);
+                let redet_start = Instant::now();
+                if let Ok(new_regions) = self.detector.detect(&processed_img) {
+                    if !new_regions.is_empty() {
+                        regions = new_regions;
+                    }
+                }
+                detection_ms += redet_start.elapsed().as_secs_f32() * 1000.0;
+            }
+            orientation_ms = orient_start.elapsed().as_secs_f32() * 1000.0;
+        }
 
         if regions.is_empty() {
             return Ok(OcrResult {
@@ -293,23 +319,70 @@ impl OcrEngine {
                 regions: Vec::new(),
                 dimensions: (w, h),
                 format: DocumentFormat::Unknown,
-                duration_ms: start.elapsed().as_millis() as u64,
+                duration_ms: total_start.elapsed().as_millis() as u64,
+                timing: crate::profiling::StageTiming {
+                    preprocessing_ms,
+                    detection_ms,
+                    orientation_ms,
+                    total_ms: total_start.elapsed().as_secs_f32() * 1000.0,
+                    ..Default::default()
+                },
             });
         }
 
-        let recognized_items = self
+        let rec_start = Instant::now();
+        let mut recognized_items = self
             .recognizer
             .recognize_regions_batch(&processed_img, &regions)?;
+        let recognition_ms = rec_start.elapsed().as_secs_f32() * 1000.0;
         debug!("Recognized {} text items", recognized_items.len());
 
+        let second_pass_start = Instant::now();
+        let mut second_pass_ms = 0.0f32;
+        if self.config.second_pass_enabled && !recognized_items.is_empty() {
+            for item in recognized_items.iter_mut() {
+                if item.confidence < self.config.second_pass_threshold {
+                    if let Some(crop) = self.recognizer.crop_region(&processed_img, &item.region) {
+                        let enhanced_crop = enhance_if_needed(
+                            &DynamicImage::ImageRgb8(crop),
+                            self.config.enhancement_variance_threshold,
+                        ).to_rgb8();
+                        if let Ok((re_text, re_conf)) = self.recognizer.recognize_crop(&enhanced_crop) {
+                            if re_conf > item.confidence && !re_text.is_empty() {
+                                item.text = re_text;
+                                item.confidence = re_conf;
+                            }
+                        }
+                    }
+                }
+            }
+            second_pass_ms = second_pass_start.elapsed().as_secs_f32() * 1000.0;
+        }
+
+        let post_start = Instant::now();
         let sorted_items = sort_reading_order(recognized_items);
         let (flat_regions, lines) = group_into_lines(sorted_items);
         let text = reconstruct_text_from_lines(&lines);
+        let postprocessing_ms = post_start.elapsed().as_secs_f32() * 1000.0;
 
         let conf = if flat_regions.is_empty() {
             0.0
         } else {
             flat_regions.iter().map(|r| r.confidence).sum::<f32>() / flat_regions.len() as f32
+        };
+
+        let total_ms = total_start.elapsed().as_secs_f32() * 1000.0;
+
+        let timing = crate::profiling::StageTiming {
+            parsing_ms: 0.0,
+            rendering_ms: 0.0,
+            preprocessing_ms,
+            detection_ms,
+            orientation_ms,
+            recognition_ms,
+            second_pass_ms,
+            postprocessing_ms,
+            total_ms,
         };
 
         Ok(OcrResult {
@@ -319,7 +392,8 @@ impl OcrEngine {
             regions: flat_regions,
             dimensions: (w, h),
             format: DocumentFormat::Unknown,
-            duration_ms: start.elapsed().as_millis() as u64,
+            duration_ms: total_start.elapsed().as_millis() as u64,
+            timing,
         })
     }
 

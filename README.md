@@ -3,21 +3,25 @@
 High-performance OCR library for Rust, powered by ONNX Runtime and PP-OCRv6. Built for extreme speed, high accuracy, and zero-configuration ergonomics.
 
 > [!NOTE]
-> ### 🚀 What's New in v0.1.3
-> - 🧠 **PP-OCRv6 Engine**: Upgraded from PP-OCRv4 to PP-OCRv6 — LCNetV4 backbone with MetaFormer architecture, RepLKFPN detection, EncoderWithLightSVTR recognition.
-> - 🌍 **Unified 50-Language Model**: A single model supports 50 languages (Latin, CJK, Arabic, Devanagari) without model switching.
-> - ⚡ **Deep Optimizations**: LUT contrast mapping, separable blur, `unsafe` buffer access, compile-time normalization constants, SIMD-friendly variance.
-> - 📦 **Smaller Binary**: Release profile now strips symbols. +4.6% detection accuracy, +5.1% recognition accuracy vs PP-OCRv5.
+> ### 🚀 What's New in v0.2.0
+> - 📄 **Document AI Suite**: Built-in intelligent schemas for e-KTP (`to_ktp()`), Receipt/Invoices (`to_receipt()`), 2D Grid Table reconstruction (`to_table()`), and Key-Value forms (`to_key_values()`).
+> - 🔄 **Orientation & Deskew**: Radon/projection profile skew detection (-45° to +45°) with bilinear deskewing and orthogonal rotation correction.
+> - 🎯 **Confidence-based 2nd Pass**: Intelligent selective re-OCR with contrast enhancement and sharpening on low-confidence regions.
+> - ⏱️ **Stage Latency Profiler**: Granular `StageTiming` capturing preprocessing, detection, crop, recognition, and postprocessing latency with P50/P95/P99 analytics.
+> - 📊 **Accuracy Evaluation**: Integrated Character Error Rate (CER) and Word Error Rate (WER) calculation utilities.
+> - ⚡ **GPU Features**: Optional `cuda` and `directml` acceleration targets.
 
 ## Key Features
 
-- **Blazing Fast**: SIMD-accelerated resizing (AVX2/NEON), single-pass batch recognition inference, and parallel multi-page PDF processing.
+- **Document AI Intelligent Schemas**: Out-of-the-box parsing for ID cards (KTP with NIK typo fix), Receipts/Invoices, tabular Markdown grids, and form Key-Value pairs.
+- **Orientation & Skew Correction**: Automatically detects text skew angles and deskews pages prior to DBNet detection.
+- **Blazing Fast**: PP-OCRv6 engine with SIMD-accelerated resizing (AVX2/NEON), single-pass batch inference, and Rayon parallel pipeline.
+- **Zero-Panic Guarantee**: All operations return `Result<T, OcrError>` with graceful degradation and safe buffer math.
 - **Universal Input**: Recognize text directly from local file paths, web URLs (`http://`, `https://`), raw memory bytes, or decoded images.
 - **Multi-File Batching**: Process dozens or hundreds of files in parallel across CPU threads with automatic workload balancing.
 - **Zero Configuration**: Missing ONNX models and native runtime libraries (Pdfium) are automatically downloaded to user cache on first run.
-- **Rich Structured Output**: Returns text, overall confidence, structured reading lines, word bounding boxes, TSV exports, and JSON serialization.
-- **Multi-Language Support**: Unified PP-OCRv6 model supports 50 languages (Chinese, English, Japanese, and 46+ Latin-script languages).
-- **Format Validation**: Automatic image format sniffing and explicit rejection of unsupported files with helpful error messages.
+- **Rich Structured Output**: Returns text, confidence, structured reading lines, bounding boxes, TSV, JSON, KTP, Table, and Receipt schemas.
+- **Multi-Language Support**: Unified PP-OCRv6 model supports 50 languages without switching models.
 
 ## Installation
 
@@ -25,14 +29,14 @@ Add this crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-alvio-ocr = "0.1"
+alvio-ocr = "0.2"
 ```
 
 To enable PDF document OCR, enable the `pdf` feature:
 
 ```toml
 [dependencies]
-alvio-ocr = { version = "0.1", features = ["pdf"] }
+alvio-ocr = { version = "0.2", features = ["pdf"] }
 ```
 
 ## Supported File Formats
@@ -217,6 +221,347 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Input Payloads & APIs
+
+`alvio-ocr` supports multiple input payloads depending on your application architecture:
+
+### 1. Rust API Input Payloads
+
+| API Method | Input Payload Type | Description | Example |
+|---|---|---|---|
+| `engine.recognize(target)` | `&str` or `&Path` | Auto-detects local file path or remote HTTP/HTTPS URL | `engine.recognize("photo.jpg")` or `engine.recognize("https://...")` |
+| `engine.recognize_file(path)` | `&str` or `&Path` | Reads directly from filesystem path | `engine.recognize_file("./docs/invoice.png")` |
+| `engine.recognize_url(url)` | `&str` | Downloads image in-memory via HTTP/HTTPS and processes | `engine.recognize_url("https://cdn.site.com/doc.webp")` |
+| `engine.recognize_bytes(bytes)` | `&[u8]` | In-memory raw bytes (e.g. from multipart HTTP upload or database blob) | `engine.recognize_bytes(&upload_bytes)` |
+| `engine.recognize_image(img)` | `&image::DynamicImage` | Pre-decoded `image::DynamicImage` in memory | `engine.recognize_image(&dynamic_img)` |
+| `engine.recognize_files(&paths)` | `&[&str]` | Slice of file paths processed in parallel with Rayon worker pool | `engine.recognize_files(&["1.jpg", "2.jpg"])` |
+| `engine.recognize_pdf(bytes)` | `&[u8]` | Raw PDF file bytes (requires `features = ["pdf"]`) | `engine.recognize_pdf(&pdf_bytes)` |
+
+### 2. HTTP REST API Payload (cURL)
+
+Send binary image or PDF via standard `multipart/form-data`:
+
+```bash
+curl -X POST http://localhost:3000/api/ocr \
+  -F "file=@/path/to/identity_card.jpg"
+```
+
+Or pass remote image URL in JSON payload:
+
+```bash
+curl -X POST http://localhost:3000/api/ocr/url \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/receipt.jpg"}'
+```
+
+---
+
+## Response Structure & Schemas
+
+### 1. Standard OCR Response (`OcrResult`)
+
+Calling `result.to_json_pretty()` produces the following structured JSON output:
+
+```json
+{
+  "text": "PROVINSI DKI JAKARTA\nNIK:3171234567890001\nNama : ALVIO ADJI JANUAR",
+  "confidence": 0.9902,
+  "dimensions": [490, 255],
+  "format": "jpeg",
+  "duration_ms": 101,
+  "timing": {
+    "parsing_ms": 1.16,
+    "rendering_ms": 0.0,
+    "preprocessing_ms": 7.40,
+    "detection_ms": 56.48,
+    "orientation_ms": 0.02,
+    "recognition_ms": 36.40,
+    "second_pass_ms": 0.02,
+    "postprocessing_ms": 0.02,
+    "total_ms": 101.50
+  },
+  "lines": [
+    {
+      "line_number": 1,
+      "text": "PROVINSI DKI JAKARTA",
+      "confidence": 0.9993,
+      "bbox": {
+        "min_x": 58.0,
+        "min_y": 53.0,
+        "max_x": 388.0,
+        "max_y": 81.0
+      },
+      "words": [
+        {
+          "text": "PROVINSI DKI JAKARTA",
+          "confidence": 0.9993,
+          "region": {
+            "points": [
+              {"x": 58.0, "y": 53.0},
+              {"x": 388.0, "y": 53.0},
+              {"x": 388.0, "y": 81.0},
+              {"x": 58.0, "y": 81.0}
+            ]
+          },
+          "line_number": 1,
+          "bbox": {
+            "min_x": 58.0,
+            "min_y": 53.0,
+            "max_x": 388.0,
+            "max_y": 81.0
+          }
+        }
+      ]
+    },
+    {
+      "line_number": 2,
+      "text": "NIK:3171234567890001",
+      "confidence": 0.9997,
+      "bbox": {
+        "min_x": 60.0,
+        "min_y": 112.0,
+        "max_x": 384.0,
+        "max_y": 141.0
+      },
+      "words": [
+        {
+          "text": "NIK:3171234567890001",
+          "confidence": 0.9997,
+          "region": {
+            "points": [
+              {"x": 60.0, "y": 112.0},
+              {"x": 384.0, "y": 112.0},
+              {"x": 384.0, "y": 141.0},
+              {"x": 60.0, "y": 141.0}
+            ]
+          },
+          "line_number": 2,
+          "bbox": {
+            "min_x": 60.0,
+            "min_y": 112.0,
+            "max_x": 384.0,
+            "max_y": 141.0
+          }
+        }
+      ]
+    },
+    {
+      "line_number": 3,
+      "text": "Nama : ALVIO ADJI JANUAR",
+      "confidence": 0.9718,
+      "bbox": {
+        "min_x": 57.0,
+        "min_y": 174.0,
+        "max_x": 432.0,
+        "max_y": 202.0
+      },
+      "words": [
+        {
+          "text": "Nama : ALVIO ADJI JANUAR",
+          "confidence": 0.9718,
+          "region": {
+            "points": [
+              {"x": 57.0, "y": 174.0},
+              {"x": 432.0, "y": 174.0},
+              {"x": 432.0, "y": 202.0},
+              {"x": 57.0, "y": 202.0}
+            ]
+          },
+          "line_number": 3,
+          "bbox": {
+            "min_x": 57.0,
+            "min_y": 174.0,
+            "max_x": 432.0,
+            "max_y": 202.0
+          }
+        }
+      ]
+    }
+  ],
+  "regions": [
+    {
+      "text": "PROVINSI DKI JAKARTA",
+      "confidence": 0.9993,
+      "region": {
+        "points": [
+          {"x": 58.0, "y": 53.0},
+          {"x": 388.0, "y": 53.0},
+          {"x": 388.0, "y": 81.0},
+          {"x": 58.0, "y": 81.0}
+        ]
+      },
+      "line_number": 1,
+      "bbox": {
+        "min_x": 58.0,
+        "min_y": 53.0,
+        "max_x": 388.0,
+        "max_y": 81.0
+      }
+    }
+  ]
+}
+```
+
+#### Fields Reference
+
+| Field | Type | Description |
+|---|---|---|
+| `text` | `String` | Complete continuous text reconstructed in natural reading order |
+| `confidence` | `f32` | Aggregate mean confidence score across all regions (0.0 to 1.0) |
+| `dimensions` | `(u32, u32)` | Original image width and height in pixels |
+| `format` | `DocumentFormat` | Detected document format: `jpeg`, `png`, `webp`, `bmp`, `tiff`, `pdf` |
+| `duration_ms` | `u64` | Total end-to-end execution latency in milliseconds |
+| `timing` | `StageTiming` | Granular millisecond profiling across all pipeline stages |
+| `lines` | `Vec<TextLine>` | Spatially clustered lines of text with bounding boxes and line numbers |
+| `regions` | `Vec<OcrText>` | Low-level detected polygon boxes, confidence scores, and raw tokens |
+
+---
+
+### 2. Document AI: Indonesian e-KTP Schema (`to_ktp()`)
+
+Automatically maps recognized text lines to Indonesian National Identity Card (KTP) fields with automatic OCR typo correction on the 16-digit NIK:
+
+```rust
+let ktp = result.to_ktp();
+println!("NIK: {:?}", ktp.nik);
+println!("Nama: {:?}", ktp.nama);
+```
+
+#### JSON Output Representation
+
+```json
+{
+  "provinsi": "DKI JAKARTA",
+  "kota_kabupaten": "JAKARTA SELATAN",
+  "nik": "3171234567890001",
+  "nama": "ALVIO ADJI JANUAR",
+  "tempat_tgl_lahir": "JAKARTA, 01-01-1998",
+  "jenis_kelamin": "LAKI-LAKI",
+  "golongan_darah": "O",
+  "alamat": "JL. SUDIRMAN NO. 12",
+  "rt_rw": "001/002",
+  "kel_desa": "KUNINGAN",
+  "kecamatan": "SETIABUDI",
+  "agama": "ISLAM",
+  "status_perkawinan": "BELUM KAWIN",
+  "pekerjaan": "KARYAWAN SWASTA",
+  "kewarganegaraan": "WNI",
+  "berlaku_hingga": "SEUMUR HIDUP"
+}
+```
+
+#### KtpData Method Helpers
+
+- `ktp.is_valid_nik()`: Returns `true` if NIK is exactly 16 decimal digits.
+
+---
+
+### 3. Document AI: Receipt & Invoice Schema (`to_receipt()`)
+
+Automatically isolates merchant header, transaction date, line items with quantities and prices, subtotal, tax, and grand total:
+
+```rust
+let receipt = result.to_receipt();
+println!("Merchant: {:?}", receipt.merchant_name);
+println!("Grand Total: {:?}", receipt.total);
+```
+
+#### JSON Output Representation
+
+```json
+{
+  "merchant_name": "KOPI KENANGAN",
+  "date": "17/09/2026",
+  "invoice_number": "INV-20260917-0042",
+  "subtotal": 60000.0,
+  "tax": 6000.0,
+  "discount": null,
+  "total": 66000.0,
+  "currency": "IDR",
+  "items": [
+    {
+      "name": "Kopi Kenangan Mantan Large",
+      "quantity": 2.0,
+      "price": 48000.0
+    },
+    {
+      "name": "Roti Coklat Klasik",
+      "quantity": 1.0,
+      "price": 12000.0
+    }
+  ]
+}
+```
+
+---
+
+### 4. Document AI: Table & Grid Reconstructor (`to_table()`)
+
+Reconstructs 2D grid tables from recognized spatial coordinates:
+
+```rust
+let table = result.to_table();
+println!("{}", table.to_markdown());
+```
+
+#### Markdown Output Example
+
+```markdown
+| Item Name | Quantity | Unit Price | Amount |
+|---|---|---|---|
+| Mechanical Keyboard | 1 | 850,000 | 850,000 |
+| Mouse Pad XL | 2 | 75,000 | 150,000 |
+| USB-C Hub 8-in-1 | 1 | 320,000 | 320,000 |
+```
+
+#### Matrix Array Representation (`table.to_matrix()`)
+
+```json
+[
+  ["Item Name", "Quantity", "Unit Price", "Amount"],
+  ["Mechanical Keyboard", "1", "850,000", "850,000"],
+  ["Mouse Pad XL", "2", "75,000", "150,000"],
+  ["USB-C Hub 8-in-1", "1", "320,000", "320,000"]
+]
+```
+
+---
+
+### 5. Document AI: Key-Value Form Extractor (`to_key_values()`)
+
+Extracts colon-delimited or aligned key-value pairs from arbitrary form documents:
+
+```rust
+let pairs = result.to_key_values();
+for pair in pairs {
+    println!("{}: {} (conf: {:.2})", pair.key, pair.value, pair.confidence);
+}
+```
+
+#### JSON Output Representation
+
+```json
+[
+  {
+    "key": "Invoice No",
+    "value": "INV-2026-001",
+    "confidence": 0.985
+  },
+  {
+    "key": "Due Date",
+    "value": "30-09-2026",
+    "confidence": 0.978
+  },
+  {
+    "key": "Payment Terms",
+    "value": "Net 30",
+    "confidence": 0.991
+  }
+]
+```
+
+---
+
 ## Architecture (PP-OCRv6)
 
 ```
@@ -310,6 +655,36 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+```
+
+#### Test HTTP Endpoint with cURL
+
+Request:
+```bash
+curl -X POST http://localhost:3000/api/ocr \
+  -F "file=@/path/to/invoice.jpg"
+```
+
+HTTP 200 OK Response:
+```json
+{
+  "text": "PT DIGITAL SUKSES\nINVOICE #INV-2026-081\nTOTAL: Rp 1.250.000",
+  "confidence": 0.988,
+  "dimensions": [800, 1200],
+  "format": "jpeg",
+  "duration_ms": 94,
+  "timing": {
+    "preprocessing_ms": 6.8,
+    "detection_ms": 52.1,
+    "recognition_ms": 34.9,
+    "total_ms": 94.2
+  },
+  "lines": [
+    { "line_number": 1, "text": "PT DIGITAL SUKSES", "confidence": 0.995 },
+    { "line_number": 2, "text": "INVOICE #INV-2026-081", "confidence": 0.989 },
+    { "line_number": 3, "text": "TOTAL: Rp 1.250.000", "confidence": 0.981 }
+  ]
 }
 ```
 

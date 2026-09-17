@@ -181,3 +181,92 @@ fn test_ppocrv6_accuracy_and_performance() {
         }
     }
 }
+
+#[test]
+fn test_cer_wer_metrics() {
+    let reference = "PROVINSI DKI JAKARTA";
+    let hyp_exact = "PROVINSI DKI JAKARTA";
+    let hyp_typo = "PROVINSI DKI JAKARTO";
+
+    assert_eq!(alvio_ocr::compute_cer(reference, hyp_exact), 0.0);
+    assert_eq!(alvio_ocr::compute_wer(reference, hyp_exact), 0.0);
+
+    let cer_typo = alvio_ocr::compute_cer(reference, hyp_typo);
+    assert!(cer_typo > 0.0 && cer_typo < 0.1);
+
+    let wer_typo = alvio_ocr::compute_wer(reference, hyp_typo);
+    assert!(wer_typo > 0.0);
+}
+
+#[test]
+fn test_ktp_extraction() {
+    let sample_ktp_text = "PROVINSI DKI JAKARTA\nKOTA JAKARTA SELATAN\nNIK : 3171020304050001\nNama : BUDI SANTOSO\nTempat/Tgl Lahir : JAKARTA, 01-01-1990\nJenis Kelamin : LAKI-LAKI\nAlamat : JL. SUDIRMAN NO. 10\nRT/RW : 001/002\nKel/Desa : SENAYAN\nKecamatan : KEBAYORAN BARU\nAgama : ISLAM\nStatus Perkawinan : KAWIN\nPekerjaan : PEGAWAI SWASTA\nKewarganegaraan : WNI\nBerlaku Hingga : SEUMUR HIDUP";
+
+    let ktp = alvio_ocr::extract_ktp(sample_ktp_text);
+    assert_eq!(ktp.nik, Some("3171020304050001".to_string()));
+    assert_eq!(ktp.nama, Some("BUDI SANTOSO".to_string()));
+    assert_eq!(ktp.jenis_kelamin, Some("LAKI-LAKI".to_string()));
+    assert_eq!(ktp.kewarganegaraan, Some("WNI".to_string()));
+    assert!(ktp.is_valid_nik());
+}
+
+#[test]
+fn test_receipt_extraction() {
+    let sample_receipt = "WARUNG MAKAN SEDAP\nTANGGAL: 17/09/2026\nINVOICE: INV-9988\nNASI GORENG  25.000\nES TEH MANIS  5.000\nSUBTOTAL: 30.000\nPPN: 3.300\nTOTAL: 33.300";
+
+    let receipt = alvio_ocr::extract_receipt(sample_receipt);
+    assert_eq!(receipt.merchant_name, Some("WARUNG MAKAN SEDAP".to_string()));
+    assert_eq!(receipt.total, Some(33300.0));
+    assert_eq!(receipt.subtotal, Some(30000.0));
+    assert_eq!(receipt.tax, Some(3300.0));
+    assert_eq!(receipt.invoice_number, Some("INV-9988".to_string()));
+}
+
+#[test]
+fn test_table_reconstruction() {
+    use alvio_ocr::{OcrText, Point, TextRegion};
+
+    let make_box = |text: &str, x: f32, y: f32, w: f32, h: f32| {
+        let region = TextRegion {
+            polygon: vec![
+                Point::new(x, y),
+                Point::new(x + w, y),
+                Point::new(x + w, y + h),
+                Point::new(x, y + h),
+            ],
+            confidence: 0.99,
+        };
+        OcrText::new(text.to_string(), 0.99, region)
+    };
+
+    let items = vec![
+        make_box("No", 10.0, 10.0, 30.0, 20.0),
+        make_box("Item", 50.0, 10.0, 60.0, 20.0),
+        make_box("1", 10.0, 40.0, 30.0, 20.0),
+        make_box("Apple", 50.0, 40.0, 60.0, 20.0),
+    ];
+
+    let table = alvio_ocr::reconstruct_table(items);
+    assert_eq!(table.rows.len(), 2);
+    let md = table.to_markdown();
+    assert!(md.contains("No") && md.contains("Item") && md.contains("Apple"));
+}
+
+#[test]
+fn test_stage_timing_on_real_image() {
+    let engine = OcrEngine::auto().expect("Engine auto");
+    let sample_image = "D:/riset_alvio/ocr/tests/fixtures/ocr/simple.jpg";
+    if Path::new(sample_image).exists() {
+        let res = engine.recognize_file(sample_image).expect("OCR result");
+        assert!(res.timing.total_ms > 0.0);
+        assert!(res.timing.preprocessing_ms > 0.0);
+        assert!(res.timing.detection_ms > 0.0);
+        assert!(res.timing.recognition_ms > 0.0);
+        let summary = res.timing.summary();
+        assert!(summary.contains("STAGE TIMING BREAKDOWN"));
+
+        let ktp = res.to_ktp();
+        assert!(ktp.provinsi.is_some() || ktp.nik.is_some() || ktp.nama.is_some());
+    }
+}
+
