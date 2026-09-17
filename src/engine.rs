@@ -102,7 +102,7 @@ impl OcrEngine {
     pub fn recognize_url(&self, url: &str) -> Result<OcrResult, OcrError> {
         debug!("Fetching OCR image from URL: {}", url);
         let resp = ureq::get(url)
-            .set("User-Agent", "alvio-ocr/0.1.1")
+            .set("User-Agent", concat!("alvio-ocr/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(30))
             .call()
             .map_err(|e| OcrError::Network(format!("Failed to fetch '{}': {}", url, e)))?;

@@ -3,7 +3,7 @@
 High-performance OCR library for Rust, powered by ONNX Runtime and PP-OCRv4. Built for extreme speed, high accuracy, and zero-configuration ergonomics.
 
 > [!NOTE]
-> ### 🚀 What's New in v0.1.1
+> ### 🚀 What's New in v0.1.2
 > - 🌐 **Universal `recognize()`**: Accepts both local file paths and remote web URLs (`http://`, `https://`) seamlessly without boilerplate.
 > - ⚡ **Parallel Multi-File Batching**: Process multiple files in parallel with `recognize_files(&[...])` via the Rayon threadpool.
 > - 📊 **Rich Response Structure**: `OcrResult` now includes overall confidence, reading lines (`TextLine`), bounding boxes, instant JSON (`to_json_pretty()`), and TSV export (`to_tsv()`).
