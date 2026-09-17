@@ -30,14 +30,14 @@ Add this crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-alvio-ocr = "0.2"
+alvio-ocr = "0.2.2"
 ```
 
 To enable PDF document OCR, enable the `pdf` feature:
 
 ```toml
 [dependencies]
-alvio-ocr = { version = "0.2", features = ["pdf"] }
+alvio-ocr = { version = "0.2.2", features = ["pdf"] }
 ```
 
 ## Supported File Formats
