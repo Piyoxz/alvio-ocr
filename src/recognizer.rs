@@ -57,13 +57,13 @@ impl TextRecognizer {
             .map_err(|e| OcrError::ModelLoadFailed(format!("Intra threads: {}", e)))?
             .with_inter_threads(inter)
             .map_err(|e| OcrError::ModelLoadFailed(format!("Inter threads: {}", e)))?
-            .with_parallel_execution(true)
+            .with_parallel_execution(false)
             .map_err(|e| OcrError::ModelLoadFailed(format!("Parallel execution: {}", e)))?
             .commit_from_file(model_path)
             .map_err(|e| OcrError::ModelLoadFailed(format!("Load recognition model: {}", e)))?;
 
         info!(
-            "PP-OCRv6 recognition model loaded (intra_threads={}, inter_threads={}, parallel=true)",
+            "PP-OCRv6 recognition model loaded (intra_threads={}, inter_threads={}, parallel=false)",
             intra, inter
         );
 

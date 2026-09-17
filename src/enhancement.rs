@@ -122,12 +122,14 @@ fn unsharp_mask(img: &RgbImage, strength: f32) -> RgbImage {
     })
 }
 
-pub fn enhance_if_needed(img: &DynamicImage, variance_threshold: f32) -> DynamicImage {
+use std::borrow::Cow;
+
+pub fn enhance_if_needed<'a>(img: &'a DynamicImage, variance_threshold: f32) -> Cow<'a, DynamicImage> {
     let gray = img.to_luma8();
     let variance = compute_variance(&gray);
 
     if variance >= variance_threshold {
-        return img.clone();
+        return Cow::Borrowed(img);
     }
 
     tracing::debug!(
@@ -140,5 +142,5 @@ pub fn enhance_if_needed(img: &DynamicImage, variance_threshold: f32) -> Dynamic
     let contrasted = auto_contrast(&rgb);
     let sharpened = unsharp_mask(&contrasted, 0.8);
 
-    DynamicImage::ImageRgb8(sharpened)
+    Cow::Owned(DynamicImage::ImageRgb8(sharpened))
 }

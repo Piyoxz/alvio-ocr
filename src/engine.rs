@@ -81,13 +81,23 @@ impl OcrEngine {
             }
         };
 
-        Ok(Self {
+        let engine = Self {
             detector,
             recognizer,
             config,
             #[cfg(feature = "pdf")]
             pdf_processor,
-        })
+        };
+        let _ = engine.warmup();
+        Ok(engine)
+    }
+
+    pub fn warmup(&self) -> Result<(), OcrError> {
+        let dummy = DynamicImage::new_rgb8(64, 64);
+        let _ = self.detector.detect(&dummy);
+        let crop = image::RgbImage::new(64, 48);
+        let _ = self.recognizer.recognize_crop(&crop);
+        Ok(())
     }
 
     pub fn recognize(&self, input: &str) -> Result<OcrResult, OcrError> {
@@ -282,15 +292,17 @@ impl OcrEngine {
         debug!("OCR on image ({}x{})...", w, h);
 
         let pre_start = Instant::now();
-        let mut processed_img = if self.config.enhancement_enabled {
+        let enhanced_cow = if self.config.enhancement_enabled {
             enhance_if_needed(img, self.config.enhancement_variance_threshold)
         } else {
-            img.clone()
+            std::borrow::Cow::Borrowed(img)
         };
+        let deskewed_holder;
+        let mut active_img = enhanced_cow.as_ref();
         let preprocessing_ms = pre_start.elapsed().as_secs_f32() * 1000.0;
 
         let det_start = Instant::now();
-        let mut regions = self.detector.detect(&processed_img)?;
+        let mut regions = self.detector.detect(active_img)?;
         let mut detection_ms = det_start.elapsed().as_secs_f32() * 1000.0;
         debug!("Detected {} text regions", regions.len());
 
@@ -299,14 +311,17 @@ impl OcrEngine {
         if self.config.deskew_enabled && !regions.is_empty() {
             let skew_angle = crate::orientation::detect_skew_angle(&regions);
             if skew_angle.abs() >= 1.5 {
-                processed_img = crate::orientation::deskew_image(&processed_img, skew_angle);
-                let redet_start = Instant::now();
-                if let Ok(new_regions) = self.detector.detect(&processed_img) {
-                    if !new_regions.is_empty() {
-                        regions = new_regions;
+                deskewed_holder = Some(crate::orientation::deskew_image(active_img, skew_angle));
+                if let Some(ref d_img) = deskewed_holder {
+                    active_img = d_img;
+                    let redet_start = Instant::now();
+                    if let Ok(new_regions) = self.detector.detect(active_img) {
+                        if !new_regions.is_empty() {
+                            regions = new_regions;
+                        }
                     }
+                    detection_ms += redet_start.elapsed().as_secs_f32() * 1000.0;
                 }
-                detection_ms += redet_start.elapsed().as_secs_f32() * 1000.0;
             }
             orientation_ms = orient_start.elapsed().as_secs_f32() * 1000.0;
         }
@@ -333,7 +348,7 @@ impl OcrEngine {
         let rec_start = Instant::now();
         let mut recognized_items = self
             .recognizer
-            .recognize_regions_batch(&processed_img, &regions)?;
+            .recognize_regions_batch(active_img, &regions)?;
         let recognition_ms = rec_start.elapsed().as_secs_f32() * 1000.0;
         debug!("Recognized {} text items", recognized_items.len());
 
@@ -342,7 +357,7 @@ impl OcrEngine {
         if self.config.second_pass_enabled && !recognized_items.is_empty() {
             for item in recognized_items.iter_mut() {
                 if item.confidence < self.config.second_pass_threshold {
-                    if let Some(crop) = self.recognizer.crop_region(&processed_img, &item.region) {
+                    if let Some(crop) = self.recognizer.crop_region(active_img, &item.region) {
                         let enhanced_crop = enhance_if_needed(
                             &DynamicImage::ImageRgb8(crop),
                             self.config.enhancement_variance_threshold,

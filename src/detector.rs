@@ -80,41 +80,36 @@ impl TextDetector {
         let pixel_count = target_h * target_w;
         let det_thresh = self.det_threshold;
 
-        let (prob_vec, binary_img) = {
-            let mut session_guard = self.session.lock();
-            let outputs = session_guard
-                .run(ort::inputs!["x" => input_tensor])
-                .map_err(|e| OcrError::InferenceFailed(format!("Detection: {}", e)))?;
+        let mut session_guard = self.session.lock();
+        let outputs = session_guard
+            .run(ort::inputs!["x" => input_tensor])
+            .map_err(|e| OcrError::InferenceFailed(format!("Detection: {}", e)))?;
 
-            let output_val = outputs
-                .iter()
-                .next()
-                .map(|(_, v)| v)
-                .ok_or_else(|| OcrError::InferenceFailed("Empty detection output".to_string()))?;
+        let output_val = outputs
+            .iter()
+            .next()
+            .map(|(_, v)| v)
+            .ok_or_else(|| OcrError::InferenceFailed("Empty detection output".to_string()))?;
 
-            let pred_view = output_val
-                .try_extract_array::<f32>()
-                .map_err(|e| OcrError::InferenceFailed(format!("Extract array: {}", e)))?;
+        let pred_view = output_val
+            .try_extract_array::<f32>()
+            .map_err(|e| OcrError::InferenceFailed(format!("Extract array: {}", e)))?;
 
-            let raw_slice = pred_view.as_slice().unwrap_or(&[]);
-
-            let prob_vec: Vec<f32> = if raw_slice.len() >= pixel_count {
-                raw_slice[..pixel_count].to_vec()
-            } else {
-                raw_slice.to_vec()
-            };
-
-            let mut binary_img = GrayImage::new(target_w as u32, target_h as u32);
-            let binary_raw = binary_img.as_mut();
-            let limit = pixel_count.min(prob_vec.len()).min(binary_raw.len());
-            for i in 0..limit {
-                if prob_vec[i] >= det_thresh {
-                    unsafe { *binary_raw.get_unchecked_mut(i) = 255; }
-                }
-            }
-
-            (prob_vec, binary_img)
+        let raw_slice = pred_view.as_slice().unwrap_or(&[]);
+        let prob_slice = if raw_slice.len() >= pixel_count {
+            &raw_slice[..pixel_count]
+        } else {
+            raw_slice
         };
+
+        let mut binary_img = GrayImage::new(target_w as u32, target_h as u32);
+        let binary_raw = binary_img.as_mut();
+        let limit = pixel_count.min(prob_slice.len()).min(binary_raw.len());
+        for i in 0..limit {
+            if unsafe { *prob_slice.get_unchecked(i) } >= det_thresh {
+                unsafe { *binary_raw.get_unchecked_mut(i) = 255; }
+            }
+        }
 
         let contours = find_contours_with_threshold::<u32>(&binary_img, 128);
         let binary_raw = binary_img.as_ref();
@@ -172,8 +167,8 @@ impl TextDetector {
                 for cx in min_x..=clamped_max_x {
                     let idx = row_base + cx as usize;
                     if idx < binary_raw.len() && unsafe { *binary_raw.get_unchecked(idx) } > 0 {
-                        if idx < prob_vec.len() {
-                            score_sum += unsafe { *prob_vec.get_unchecked(idx) };
+                        if idx < prob_slice.len() {
+                            score_sum += unsafe { *prob_slice.get_unchecked(idx) };
                         }
                         score_count += 1;
                     }

@@ -196,9 +196,7 @@ fn fast_resize_rgb_from_raw(rgb: &RgbImage, target_w: u32, target_h: u32) -> Rgb
         return rgb.clone();
     }
 
-    let mut src_bytes = rgb.as_raw().clone();
-
-    let src_image = match FirImage::from_slice_u8(src_w, src_h, &mut src_bytes, PixelType::U8x3) {
+    let src_image = match fast_image_resize::images::ImageRef::new(src_w, src_h, rgb.as_raw(), PixelType::U8x3) {
         Ok(img) => img,
         Err(_) => return RgbImage::new(target_w, target_h),
     };

@@ -172,14 +172,14 @@ impl OcrConfig {
             det_threshold: 0.25,
             det_box_thresh: 0.4,
             unclip_ratio: 1.6,
-            det_max_side_len: 1024,
+            det_max_side_len: 960,
 
             rec_threshold: 0.4,
 
             nms_iou_threshold: 0.4,
 
             enhancement_enabled: true,
-            enhancement_variance_threshold: 1500.0,
+            enhancement_variance_threshold: 500.0,
 
             deskew_enabled: true,
             second_pass_enabled: true,
@@ -327,12 +327,12 @@ impl OcrConfig {
     pub(crate) fn resolve_threads(&self) -> (usize, usize) {
         let cpus = num_cpus::get().max(1);
         let intra = if self.intra_threads == 0 {
-            (cpus / 2).max(1)
+            cpus.min(6).max(1)
         } else {
             self.intra_threads
         };
         let inter = if self.inter_threads == 0 {
-            cpus.max(1)
+            1
         } else {
             self.inter_threads
         };

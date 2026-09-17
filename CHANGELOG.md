@@ -5,6 +5,18 @@ All notable changes to the `alvio-ocr` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-17
+
+### Optimized
+- **Zero-Copy Image Borrowing**: `enhance_if_needed` now uses `Cow<'a, DynamicImage>`, eliminating unnecessary full-image clones for clean input images.
+- **Zero-Copy FIR Resizing**: Converted `fast_resize_rgb_from_raw` to use `ImageRef` instead of cloning raw RGB bytes prior to convolution.
+- **Zero-Copy Detection Slicing**: Eliminated 4MB `prob_vec` dynamic float buffer allocation per detection pass; uses direct contiguous tensor slice.
+- **Threadpool Tuning**: Standardized `resolve_threads` to `intra=cpus.min(6)` and `inter=1`, eliminating multi-threaded context switching and barrier contention on CPUs.
+- **Engine Warmup**: Added pre-warmed sessions during `OcrEngine::with_config` to eliminate cold-start allocator allocation on the initial request.
+- **Optimal Variance Threshold**: Reduced default `enhancement_variance_threshold` to 500.0, avoiding expensive unsharp mask filtering on clear images.
+
+---
+
 ## [0.2.0] - 2026-09-17
 
 ### Added
