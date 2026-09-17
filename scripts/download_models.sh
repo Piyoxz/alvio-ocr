@@ -2,16 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODELS_DIR="$SCRIPT_DIR/../models/ocr"
+MODELS_DIR="$SCRIPT_DIR/../models"
 
 mkdir -p "$MODELS_DIR"
 
 FILES=(
-    "ch_PP-OCRv4_det_infer.onnx|https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_det_infer.onnx"
-    "en_PP-OCRv4_rec_infer.onnx|https://huggingface.co/breezedeus/cnocr-ppocr-en_PP-OCRv4/resolve/main/en_PP-OCRv4_rec_infer.onnx"
-    "en_dict.txt|https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/en_dict.txt"
-    "ch_PP-OCRv4_rec_infer.onnx|https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx"
-    "ppocr_keys_v1.txt|https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/ppocr_keys_v1.txt"
+    "PP-OCRv6_det_small.onnx|https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx"
+    "PP-OCRv6_rec_small.onnx|https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx"
+    "ppocr_keys_v1.txt|https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt"
 )
 
 for entry in "${FILES[@]}"; do
@@ -29,5 +27,5 @@ for entry in "${FILES[@]}"; do
 done
 
 echo ""
-echo "All OCR models downloaded successfully."
+echo "All PP-OCRv6 models downloaded successfully."
 echo "Models directory: $MODELS_DIR"

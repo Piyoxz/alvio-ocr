@@ -1,9 +1,3 @@
-//! PDF processing with parallel page OCR.
-//!
-//! Optimization S5: Two-phase approach:
-//! 1. Sequential: Extract text and render pages via pdfium (not thread-safe)
-//! 2. Parallel: OCR all rendered page images via rayon
-
 use crate::{
     config::OcrConfig,
     deduplication::deduplicate_ocr_items,
@@ -16,7 +10,6 @@ use pdfium_render::prelude::*;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-/// Internal representation of page data after pdfium extraction (phase 1).
 struct ExtractedPage {
     page_number: usize,
     native_text: String,
@@ -67,7 +60,6 @@ impl PdfProcessor {
             }
         }
 
-        // Check PDFIUM_PATH env var
         if let Ok(env_path) = std::env::var("PDFIUM_PATH") {
             let path = std::path::PathBuf::from(env_path);
             if path.exists() {
@@ -79,7 +71,6 @@ impl PdfProcessor {
             }
         }
 
-        // Check common directories
         for dir in &["./libs", "../libs", "../ocr/libs", "./bin"] {
             let libs_path = Pdfium::pdfium_platform_library_name_at_path(dir);
             if libs_path.exists() {
@@ -96,7 +87,6 @@ impl PdfProcessor {
             return Ok(Pdfium::new(bindings));
         }
 
-        // Auto-download Pdfium if missing
         info!("Pdfium not found on system. Automatically downloading prebuilt Pdfium binary...");
         let libs_dir = crate::download::default_libs_dir();
         crate::download::ensure_pdfium(&libs_dir)?;
@@ -114,11 +104,6 @@ impl PdfProcessor {
         ))
     }
 
-    /// Process a PDF document with parallel page OCR.
-    ///
-    /// Uses a two-phase approach for maximum speed:
-    /// 1. **Phase 1 (sequential)**: Extract text and render page images via pdfium
-    /// 2. **Phase 2 (parallel)**: OCR all rendered page images via rayon
     pub fn process_pdf<F>(
         &self,
         pdf_bytes: &[u8],
@@ -127,7 +112,6 @@ impl PdfProcessor {
     where
         F: Fn(&DynamicImage) -> Result<(String, f32, Vec<OcrText>, Vec<TextLine>, (u32, u32)), OcrError> + Send + Sync,
     {
-        // === PHASE 1: Sequential extraction via pdfium ===
         let extracted_pages = {
             let pdfium_guard = self.pdfium.0.lock();
 
@@ -158,7 +142,6 @@ impl PdfProcessor {
                     .get(page_idx as u16)
                     .map_err(|e| OcrError::InvalidPdf(format!("Page {}: {}", page_num, e)))?;
 
-                // Extract native text
                 let native_text = match page.text() {
                     Ok(t) => t.all(),
                     Err(e) => {
@@ -171,7 +154,6 @@ impl PdfProcessor {
                 let has_usable_text =
                     !trimmed.is_empty() && trimmed.chars().any(|c| c.is_alphanumeric());
 
-                // Extract embedded images
                 let min_area = self.config.pdf_embedded_img_min_area;
                 let mut candidate_images = Vec::new();
                 for obj in page.objects().iter() {
@@ -185,7 +167,6 @@ impl PdfProcessor {
                     }
                 }
 
-                // Render page if needed (no native text and no embedded images to OCR)
                 let rendered_image = if !has_usable_text && candidate_images.is_empty() {
                     debug!("Page {} needs full render for OCR", page_num);
                     let render_config = PdfRenderConfig::new().set_target_width(1024);
@@ -207,9 +188,8 @@ impl PdfProcessor {
             }
 
             pages
-        }; // pdfium_guard dropped here
+        };
 
-        // === PHASE 2: Parallel OCR via rayon ===
         let results: Result<Vec<PageResult>, OcrError> = {
             use rayon::prelude::*;
 
@@ -333,7 +313,6 @@ impl PdfProcessor {
 
         let mut pages = results?;
 
-        // Ensure pages are in order (rayon may reorder)
         pages.sort_by_key(|p| p.page_number);
 
         Ok(pages)

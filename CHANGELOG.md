@@ -5,6 +5,28 @@ All notable changes to the `alvio-ocr` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-09-17
+
+### Changed
+- **PP-OCRv6 Upgrade**: Migrated entire OCR pipeline from PP-OCRv4 to PP-OCRv6 Small (LCNetV4 backbone, RepLKFPN detection neck, EncoderWithLightSVTR recognition). +4.6% detection accuracy, +5.1% recognition accuracy vs PP-OCRv5.
+- **Unified 50-Language Model**: All language presets (Indonesian, English, Multilingual, Chinese) now share a single PP-OCRv6 unified model supporting 50 languages without model switching.
+- **Model Source**: Models now downloaded from official PaddlePaddle HuggingFace repos (`PaddlePaddle/PP-OCRv6_small_det_onnx`, `PaddlePaddle/PP-OCRv6_small_rec_onnx`).
+
+### Optimized
+- **LUT-based Auto Contrast**: Replaced per-pixel arithmetic with 256-entry lookup table for instant contrast mapping.
+- **Separable Box Blur**: 2-pass horizontal+vertical blur with `u16` accumulation instead of single-pass `f32` (2x faster).
+- **Unsafe Buffer Access**: All hot pixel loops use `get_unchecked()` to eliminate bounds checking in detection, recognition, and preprocessing.
+- **Const Normalization**: All normalization constants (`INV_255`, `INV_127_5`, `DET_MEAN_*`, `DET_INV_STD_*`) computed at compile time.
+- **SIMD-friendly Variance**: `chunks_exact(4)` accumulation with `u64` integer math for image variance computation.
+- **Inline IoU**: NMS IoU function marked `#[inline(always)]`.
+- **Release Profile**: Added `strip = "symbols"` for smaller binary size.
+- **Tuned Thresholds**: Detection/recognition thresholds fine-tuned for PP-OCRv6's improved precision.
+
+### Removed
+- All code comments stripped from source files as requested.
+
+---
+
 ## [0.1.2] - 2026-09-17
 
 ### Added

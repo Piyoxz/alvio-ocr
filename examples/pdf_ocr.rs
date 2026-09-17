@@ -1,10 +1,3 @@
-//! PDF OCR example — recognize text from a PDF document.
-//!
-//! Requires the `pdf` feature:
-//! ```bash
-//! cargo run --example pdf_ocr --features pdf -- path/to/document.pdf
-//! ```
-
 use alvio_ocr::OcrEngine;
 use std::env;
 use std::time::Instant;
@@ -25,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let lang = alvio_ocr::OcrLanguage::from_code(&lang_str).unwrap_or(alvio_ocr::OcrLanguage::Indonesian);
 
-    println!("Initializing PDF OCR engine [{}] (zero configuration) ...", lang.display_name());
+    println!("Initializing PDF OCR engine [{}] (PP-OCRv6) ...", lang.display_name());
     let start = Instant::now();
     let engine = if let Ok(custom_dir) = env::var("OCR_MODEL_DIR") {
         OcrEngine::with_language(&custom_dir, lang)?
@@ -47,10 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("--- Page {} [source: {:?}] ---", page.page_number, page.source);
         println!("{}\n", page.text);
 
-        if !page.regions.is_empty() {
+        if !page.regions.len() == 0 {
             println!("  Regions: {}", page.regions.len());
             for (i, r) in page.regions.iter().enumerate() {
-                println!("    [{}] conf={:.4} → \"{}\"", i + 1, r.confidence, r.text);
+                println!("    [{}] conf={:.4} -> \"{}\"", i + 1, r.confidence, r.text);
             }
             println!();
         }

@@ -111,3 +111,73 @@ fn test_rich_response_methods() {
         assert!(!filtered.text.is_empty());
     }
 }
+
+#[test]
+fn test_ppocrv6_accuracy_and_performance() {
+    let model_dir = Path::new("D:/riset_alvio/ocr/models/ocr");
+    let det_v6 = if model_dir.join("PP-OCRv6_det_small.onnx").exists() {
+        model_dir.join("PP-OCRv6_det_small.onnx")
+    } else {
+        model_dir.join("ppocrv6_small_det.onnx")
+    };
+    let rec_v6 = if model_dir.join("PP-OCRv6_rec_small.onnx").exists() {
+        model_dir.join("PP-OCRv6_rec_small.onnx")
+    } else {
+        model_dir.join("ppocrv6_small_rec.onnx")
+    };
+    let dict_v6 = if model_dir.join("ppocrv6_keys.txt").exists() {
+        model_dir.join("ppocrv6_keys.txt")
+    } else {
+        model_dir.join("ppocr_keys_v1.txt")
+    };
+
+    if det_v6.exists() && rec_v6.exists() && dict_v6.exists() {
+        let mut config = alvio_ocr::OcrConfig::default_with_model_dir(model_dir);
+        config.detection_model_path = det_v6;
+        config.recognition_model_path = rec_v6;
+        config.dictionary_path = dict_v6;
+
+        let engine_v6 = OcrEngine::with_config(config).expect("PP-OCRv6 engine should initialize");
+
+        let sample_image = "D:/riset_alvio/ocr/tests/fixtures/ocr/simple.jpg";
+        if Path::new(sample_image).exists() {
+            let start = std::time::Instant::now();
+            let result_v6 = engine_v6.recognize_file(sample_image).expect("PP-OCRv6 OCR should succeed");
+            let elapsed = start.elapsed();
+            println!("\n==========================================");
+            println!("   PP-OCRv6 BENCHMARK RESULT (Rust)");
+            println!("==========================================");
+            println!("Latency: {:?}", elapsed);
+            println!("Confidence: {:.2}%", result_v6.confidence * 100.0);
+            println!("Detected lines: {}", result_v6.lines.len());
+            for line in &result_v6.lines {
+                println!("  Line {}: {}", line.line_number, line.text);
+            }
+            println!("==========================================\n");
+
+            assert!(!result_v6.text.is_empty());
+            assert!(result_v6.text.contains("JAKARTA") || result_v6.text.contains("PROVINSI"));
+        }
+
+        #[cfg(feature = "pdf")]
+        {
+            let sample_pdf = "D:/riset_alvio/ocr/tests/fixtures/ocr/ocr_demo.pdf";
+            if Path::new(sample_pdf).exists() {
+                let pdf_bytes = std::fs::read(sample_pdf).expect("Read PDF");
+                let start = std::time::Instant::now();
+                let pages = engine_v6.recognize_pdf(&pdf_bytes).expect("PP-OCRv6 PDF OCR should succeed");
+                let elapsed = start.elapsed();
+                println!("\n==========================================");
+                println!("   PP-OCRv6 PDF BENCHMARK (4 Pages)");
+                println!("==========================================");
+                println!("Total Latency: {:?}", elapsed);
+                println!("Pages: {}", pages.len());
+                for page in &pages {
+                    println!("Page {} [via {:?}]: lines={}", page.page_number, page.source, page.lines.len());
+                }
+                println!("==========================================\n");
+                assert_eq!(pages.len(), 4);
+            }
+        }
+    }
+}

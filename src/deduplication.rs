@@ -1,8 +1,5 @@
-//! Text deduplication between native PDF text and OCR results.
-
 use crate::types::OcrText;
 
-/// Normalize a string for comparison (lowercase, collapse whitespace).
 pub fn normalize_string(s: &str) -> String {
     s.split_whitespace()
         .collect::<Vec<_>>()
@@ -10,9 +7,6 @@ pub fn normalize_string(s: &str) -> String {
         .to_lowercase()
 }
 
-/// Remove OCR items that are duplicates of native PDF text.
-///
-/// Returns the unique OCR items and the appended text string.
 pub fn deduplicate_ocr_items(native_text: &str, ocr_items: Vec<OcrText>) -> (Vec<OcrText>, String) {
     let native_lines: Vec<String> = native_text
         .lines()

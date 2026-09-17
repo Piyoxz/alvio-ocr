@@ -2,6 +2,15 @@ use fast_image_resize::{images::Image as FirImage, PixelType, ResizeAlg, ResizeO
 use image::{DynamicImage, GenericImageView, RgbImage};
 use ndarray::Array4;
 
+const DET_MEAN_R: f32 = 0.485;
+const DET_MEAN_G: f32 = 0.456;
+const DET_MEAN_B: f32 = 0.406;
+const DET_INV_STD_R: f32 = 1.0 / 0.229;
+const DET_INV_STD_G: f32 = 1.0 / 0.224;
+const DET_INV_STD_B: f32 = 1.0 / 0.225;
+const INV_255: f32 = 1.0 / 255.0;
+const INV_127_5: f32 = 1.0 / 127.5;
+
 pub struct DetPreprocessed {
     pub tensor: Array4<f32>,
     pub target_w: u32,
@@ -35,14 +44,6 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
     let th = target_h as usize;
     let total = tw * th;
 
-    let mean_r = 0.485f32;
-    let mean_g = 0.456f32;
-    let mean_b = 0.406f32;
-    let inv_std_r = 1.0f32 / 0.229f32;
-    let inv_std_g = 1.0f32 / 0.224f32;
-    let inv_std_b = 1.0f32 / 0.225f32;
-    let inv_255 = 1.0f32 / 255.0f32;
-
     let mut data = vec![0.0f32; 3 * total];
     let (plane_r, rest) = data.split_at_mut(total);
     let (plane_g, plane_b) = rest.split_at_mut(total);
@@ -54,9 +55,14 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
         for x in 0..tw {
             let px = row_offset + x * 3;
             let idx = plane_offset + x;
-            plane_r[idx] = (raw[px] as f32 * inv_255 - mean_r) * inv_std_r;
-            plane_g[idx] = (raw[px + 1] as f32 * inv_255 - mean_g) * inv_std_g;
-            plane_b[idx] = (raw[px + 2] as f32 * inv_255 - mean_b) * inv_std_b;
+            unsafe {
+                let r = *raw.get_unchecked(px);
+                let g = *raw.get_unchecked(px + 1);
+                let b = *raw.get_unchecked(px + 2);
+                *plane_r.get_unchecked_mut(idx) = (r as f32 * INV_255 - DET_MEAN_R) * DET_INV_STD_R;
+                *plane_g.get_unchecked_mut(idx) = (g as f32 * INV_255 - DET_MEAN_G) * DET_INV_STD_G;
+                *plane_b.get_unchecked_mut(idx) = (b as f32 * INV_255 - DET_MEAN_B) * DET_INV_STD_B;
+            }
         }
     }
 
@@ -84,7 +90,6 @@ pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
     let tw = target_w as usize;
     let th = target_h as usize;
     let total = tw * th;
-    let inv_127_5 = 1.0f32 / 127.5f32;
 
     let mut data = vec![0.0f32; 3 * total];
     let (plane_r, rest) = data.split_at_mut(total);
@@ -97,9 +102,14 @@ pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
         for x in 0..tw {
             let px = row_offset + x * 3;
             let idx = plane_offset + x;
-            plane_r[idx] = raw[px] as f32 * inv_127_5 - 1.0;
-            plane_g[idx] = raw[px + 1] as f32 * inv_127_5 - 1.0;
-            plane_b[idx] = raw[px + 2] as f32 * inv_127_5 - 1.0;
+            unsafe {
+                let r = *raw.get_unchecked(px);
+                let g = *raw.get_unchecked(px + 1);
+                let b = *raw.get_unchecked(px + 2);
+                *plane_r.get_unchecked_mut(idx) = r as f32 * INV_127_5 - 1.0;
+                *plane_g.get_unchecked_mut(idx) = g as f32 * INV_127_5 - 1.0;
+                *plane_b.get_unchecked_mut(idx) = b as f32 * INV_127_5 - 1.0;
+            }
         }
     }
 
@@ -129,7 +139,6 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
     let batch_size = crops.len();
     let th = target_h as usize;
     let total_per_image = max_w * th;
-    let inv_127_5 = 1.0f32 / 127.5f32;
 
     let mut data = vec![0.0f32; batch_size * 3 * total_per_image];
 
@@ -150,9 +159,14 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
             for x in 0..tw_usize {
                 let px = row_src + x * 3;
                 let idx = row_dst + x;
-                data[r_offset + idx] = raw[px] as f32 * inv_127_5 - 1.0;
-                data[g_offset + idx] = raw[px + 1] as f32 * inv_127_5 - 1.0;
-                data[b_offset + idx] = raw[px + 2] as f32 * inv_127_5 - 1.0;
+                unsafe {
+                    let rv = *raw.get_unchecked(px);
+                    let gv = *raw.get_unchecked(px + 1);
+                    let bv = *raw.get_unchecked(px + 2);
+                    *data.get_unchecked_mut(r_offset + idx) = rv as f32 * INV_127_5 - 1.0;
+                    *data.get_unchecked_mut(g_offset + idx) = gv as f32 * INV_127_5 - 1.0;
+                    *data.get_unchecked_mut(b_offset + idx) = bv as f32 * INV_127_5 - 1.0;
+                }
             }
         }
     }

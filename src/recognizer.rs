@@ -41,19 +41,14 @@ impl TextRecognizer {
             )));
         }
 
-        info!("Loading OCR dictionary from {:?} ...", dict_path);
         let dict_file = File::open(dict_path)?;
-        let reader = BufReader::new(dict_file);
-        let mut dictionary = Vec::new();
-        for line in reader.lines() {
-            let l = line?;
-            dictionary.push(l);
-        }
+        let reader = BufReader::with_capacity(32768, dict_file);
+        let dictionary: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
         info!("Loaded {} characters into dictionary.", dictionary.len());
 
         let (intra, inter) = config.resolve_threads();
 
-        info!("Loading SVTR recognition model from {:?} ...", model_path);
+        info!("Loading PP-OCRv6 recognition model from {:?} ...", model_path);
         let session = Session::builder()
             .map_err(|e| OcrError::ModelLoadFailed(format!("SessionBuilder: {}", e)))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -68,7 +63,7 @@ impl TextRecognizer {
             .map_err(|e| OcrError::ModelLoadFailed(format!("Load recognition model: {}", e)))?;
 
         info!(
-            "SVTR recognition model loaded (intra_threads={}, inter_threads={}, parallel=true)",
+            "PP-OCRv6 recognition model loaded (intra_threads={}, inter_threads={}, parallel=true)",
             intra, inter
         );
 
@@ -79,17 +74,15 @@ impl TextRecognizer {
         })
     }
 
-    /// Recognize text in a single region (fallback for when batch is not viable).
     pub fn recognize_region(
         &self,
         img: &DynamicImage,
         region: &TextRegion,
     ) -> Result<Option<OcrText>, OcrError> {
-        let crop = self.crop_region(img, region);
-        if crop.is_none() {
-            return Ok(None);
-        }
-        let crop = crop.unwrap();
+        let crop = match self.crop_region(img, region) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
 
         let tensor = preprocess_recognition(&crop);
         let input_tensor = Tensor::from_array(tensor)
@@ -131,10 +124,6 @@ impl TextRecognizer {
         Ok(Some(OcrText::new(text, confidence, region.clone())))
     }
 
-    /// **S2: Batch recognition** — recognize all regions in a single ONNX inference call.
-    ///
-    /// This is 2-5x faster than calling `recognize_region` for each region individually,
-    /// because it eliminates per-call overhead (lock acquire, memory alloc, kernel launch).
     pub fn recognize_regions_batch(
         &self,
         img: &DynamicImage,
@@ -144,7 +133,6 @@ impl TextRecognizer {
             return Ok(Vec::new());
         }
 
-        // Crop all regions first
         let mut crops: Vec<RgbImage> = Vec::with_capacity(regions.len());
         let mut valid_indices: Vec<usize> = Vec::with_capacity(regions.len());
 
@@ -159,13 +147,10 @@ impl TextRecognizer {
             return Ok(Vec::new());
         }
 
-        // For very small batches (1-2 items), fall back to sequential to avoid padding overhead
-        if crops.len() <= 2 {
+        if crops.len() == 1 {
             let mut results = Vec::new();
-            for &idx in &valid_indices {
-                if let Some(ocr_text) = self.recognize_region(img, &regions[idx])? {
-                    results.push(ocr_text);
-                }
+            if let Some(ocr_text) = self.recognize_region(img, &regions[valid_indices[0]])? {
+                results.push(ocr_text);
             }
             return Ok(results);
         }
@@ -192,9 +177,7 @@ impl TextRecognizer {
 
         let shape = pred_view.shape();
 
-        // Batch output shape: [batch_size, seq_len, num_classes]
         if shape.len() != 3 {
-            // Model doesn't support batch — fall back to sequential
             drop(outputs);
             drop(session_guard);
             tracing::debug!("Model doesn't support batch inference, falling back to sequential");
@@ -253,19 +236,21 @@ impl TextRecognizer {
         Some(img.crop_imm(crop_x, crop_y, crop_w, crop_h).to_rgb8())
     }
 
-    /// CTC greedy decoding: convert model output to text.
+    #[inline]
     fn decode_ctc(&self, raw_slice: &[f32], seq_len: usize, num_classes: usize) -> (String, f32) {
         let mut decoded_text = String::with_capacity(seq_len);
         let mut confidence_sum = 0.0f32;
         let mut confidence_count = 0usize;
         let mut last_index = 0usize;
+        let dict_len = self.dictionary.len();
 
         for t in 0..seq_len {
             let row_start = t * num_classes;
             if row_start + num_classes > raw_slice.len() {
                 break;
             }
-            let row = &raw_slice[row_start..row_start + num_classes];
+
+            let row = unsafe { raw_slice.get_unchecked(row_start..row_start + num_classes) };
 
             let mut max_val = f32::NEG_INFINITY;
             let mut argmax = 0usize;
@@ -280,7 +265,6 @@ impl TextRecognizer {
             let prob = if max_val <= 1.0 && max_val >= 0.0 {
                 max_val
             } else {
-                // Softmax for logits
                 let mut sum_exp = 0.0f32;
                 for &val in row.iter() {
                     sum_exp += (val - max_val).exp();
@@ -292,9 +276,9 @@ impl TextRecognizer {
                 last_index = argmax;
 
                 if argmax != 0 {
-                    let ch = if argmax >= 1 && argmax <= self.dictionary.len() {
-                        Some(self.dictionary[argmax - 1].as_str())
-                    } else if argmax > self.dictionary.len() {
+                    let ch = if argmax >= 1 && argmax <= dict_len {
+                        Some(unsafe { self.dictionary.get_unchecked(argmax - 1).as_str() })
+                    } else if argmax > dict_len {
                         Some(" ")
                     } else {
                         None

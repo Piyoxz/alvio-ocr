@@ -1,9 +1,3 @@
-//! Automatic model and library downloader for zero-configuration setup.
-//!
-//! If PP-OCRv4 models or Pdfium dynamic libraries are missing on the local
-//! machine, this module automatically downloads them into a persistent cache
-//! directory (`~/.alvio-ocr/` or `%LOCALAPPDATA%\alvio-ocr\`).
-
 use crate::{config::OcrLanguage, error::OcrError};
 use std::{
     fs,
@@ -12,22 +6,15 @@ use std::{
 };
 use tracing::{info, warn};
 
-// --- Remote Model URLs ---
-
 pub const DET_MODEL_URL: &str =
-    "https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_det_infer.onnx";
+    "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx";
 
-pub const LATIN_REC_MODEL_URL: &str =
-    "https://huggingface.co/breezedeus/cnocr-ppocr-en_PP-OCRv4/resolve/main/en_PP-OCRv4_rec_infer.onnx";
-pub const LATIN_DICT_URL: &str =
-    "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/en_dict.txt";
+pub const REC_MODEL_URL: &str =
+    "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx";
 
-pub const MULTI_REC_MODEL_URL: &str =
-    "https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx";
-pub const MULTI_DICT_URL: &str =
-    "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/ppocr_keys_v1.txt";
+pub const DICT_URL: &str =
+    "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt";
 
-/// Returns the root cache directory for `alvio-ocr`.
 pub fn cache_dir() -> PathBuf {
     if let Ok(val) = std::env::var("ALVIO_OCR_CACHE") {
         return PathBuf::from(val);
@@ -56,12 +43,6 @@ pub fn cache_dir() -> PathBuf {
     std::env::temp_dir().join("alvio-ocr")
 }
 
-/// Resolves the default directory where models should be searched or saved.
-///
-/// Priority:
-/// 1. `OCR_MODEL_DIR` environment variable (if directory exists)
-/// 2. Local `./models`, `./models/ocr`, `../ocr/models/ocr` (if existing)
-/// 3. Standard user cache: `~/.alvio-ocr/models/`
 pub fn default_model_dir() -> PathBuf {
     if let Ok(val) = std::env::var("OCR_MODEL_DIR") {
         let p = PathBuf::from(val);
@@ -80,7 +61,6 @@ pub fn default_model_dir() -> PathBuf {
     cache_dir().join("models")
 }
 
-/// Resolves the default directory where dynamic libraries (Pdfium) should be searched or saved.
 pub fn default_libs_dir() -> PathBuf {
     if let Ok(val) = std::env::var("PDFIUM_PATH") {
         let p = PathBuf::from(val);
@@ -101,7 +81,6 @@ pub fn default_libs_dir() -> PathBuf {
     cache_dir().join("libs")
 }
 
-/// Download a file from `url` to `target_path` using available system tools (`curl` or PowerShell).
 pub fn download_file(url: &str, target_path: &Path) -> Result<(), OcrError> {
     if target_path.exists() && fs::metadata(target_path).map(|m| m.len() > 0).unwrap_or(false) {
         return Ok(());
@@ -120,7 +99,6 @@ pub fn download_file(url: &str, target_path: &Path) -> Result<(), OcrError> {
     info!("Downloading {} from {} ...", file_name, url);
     eprintln!("[alvio-ocr] Downloading {} from remote repository...", file_name);
 
-    // 1. Try system curl
     let curl_status = Command::new("curl")
         .arg("-L")
         .arg("--fail")
@@ -139,7 +117,6 @@ pub fn download_file(url: &str, target_path: &Path) -> Result<(), OcrError> {
         }
     }
 
-    // 2. Fallback on Windows: PowerShell Invoke-WebRequest
     #[cfg(target_os = "windows")]
     if !download_succeeded {
         warn!("curl failed or not found, falling back to PowerShell Invoke-WebRequest...");
@@ -161,7 +138,6 @@ pub fn download_file(url: &str, target_path: &Path) -> Result<(), OcrError> {
         }
     }
 
-    // 3. Fallback on Unix: wget
     #[cfg(not(target_os = "windows"))]
     if !download_succeeded {
         warn!("curl failed, falling back to wget...");
@@ -193,40 +169,29 @@ pub fn download_file(url: &str, target_path: &Path) -> Result<(), OcrError> {
     }
 }
 
-/// Ensures the detection and recognition models (and dictionaries) for `lang` exist in `model_dir`.
-/// If any file is missing, it is automatically downloaded.
-pub fn ensure_models(model_dir: &Path, lang: OcrLanguage) -> Result<(), OcrError> {
+pub fn ensure_models(model_dir: &Path, _lang: OcrLanguage) -> Result<(), OcrError> {
     if !model_dir.exists() {
         fs::create_dir_all(model_dir)?;
     }
 
-    // 1. Detection model (shared by all languages)
-    let det_path = model_dir.join("ch_PP-OCRv4_det_infer.onnx");
+    let det_path = model_dir.join("PP-OCRv6_det_small.onnx");
     if !det_path.exists() {
         download_file(DET_MODEL_URL, &det_path)?;
     }
 
-    // 2. Recognition model & dictionary
-    let rec_path = model_dir.join(lang.model_filename());
-    let dict_path = model_dir.join(lang.dict_filename());
-
-    let (rec_url, dict_url) = match lang {
-        OcrLanguage::Indonesian | OcrLanguage::English => (LATIN_REC_MODEL_URL, LATIN_DICT_URL),
-        OcrLanguage::Multilingual | OcrLanguage::Chinese => (MULTI_REC_MODEL_URL, MULTI_DICT_URL),
-    };
-
+    let rec_path = model_dir.join("PP-OCRv6_rec_small.onnx");
     if !rec_path.exists() {
-        download_file(rec_url, &rec_path)?;
+        download_file(REC_MODEL_URL, &rec_path)?;
     }
 
+    let dict_path = model_dir.join("ppocr_keys_v1.txt");
     if !dict_path.exists() {
-        download_file(dict_url, &dict_path)?;
+        download_file(DICT_URL, &dict_path)?;
     }
 
     Ok(())
 }
 
-/// Dynamic library filename for Pdfium on the current platform.
 pub fn pdfium_lib_filename() -> &'static str {
     #[cfg(target_os = "windows")]
     return "pdfium.dll";
@@ -238,8 +203,6 @@ pub fn pdfium_lib_filename() -> &'static str {
     return "pdfium";
 }
 
-/// Ensures the Pdfium dynamic library exists in `libs_dir`.
-/// If missing, downloads and extracts the official prebuilt binary archive.
 pub fn ensure_pdfium(libs_dir: &Path) -> Result<PathBuf, OcrError> {
     let lib_name = pdfium_lib_filename();
     let target_dll = libs_dir.join(lib_name);
@@ -252,7 +215,6 @@ pub fn ensure_pdfium(libs_dir: &Path) -> Result<PathBuf, OcrError> {
         fs::create_dir_all(libs_dir)?;
     }
 
-    // Determine release archive URL
     let (archive_name, internal_lib_path) = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => ("pdfium-win-x64.tgz", "bin/pdfium.dll"),
         ("windows", "aarch64") => ("pdfium-win-arm64.tgz", "bin/pdfium.dll"),
@@ -279,7 +241,6 @@ pub fn ensure_pdfium(libs_dir: &Path) -> Result<PathBuf, OcrError> {
     info!("Extracting {} from {:?} ...", lib_name, temp_tgz);
     eprintln!("[alvio-ocr] Extracting {} ...", lib_name);
 
-    // Extract using tar
     let tar_status = Command::new("tar")
         .arg("-xzf")
         .arg(&temp_tgz)
@@ -297,7 +258,6 @@ pub fn ensure_pdfium(libs_dir: &Path) -> Result<PathBuf, OcrError> {
                 if extracted_path != target_dll {
                     let _ = fs::rename(&extracted_path, &target_dll);
                 }
-                // Cleanup temp folder like bin/ or lib/ if created
                 if let Some(parent) = extracted_path.parent() {
                     if parent != libs_dir {
                         let _ = fs::remove_dir_all(parent);

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$modelsDir = Join-Path $PSScriptRoot "..\models\ocr"
+$modelsDir = Join-Path $PSScriptRoot "..\models"
 if (-not (Test-Path $modelsDir)) {
     New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
     Write-Host "Created directory: $modelsDir"
@@ -8,24 +8,16 @@ if (-not (Test-Path $modelsDir)) {
 
 $files = @(
     @{
-        Name = "ch_PP-OCRv4_det_infer.onnx"
-        Url  = "https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_det_infer.onnx"
+        Name = "PP-OCRv6_det_small.onnx"
+        Url  = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx"
     },
     @{
-        Name = "en_PP-OCRv4_rec_infer.onnx"
-        Url  = "https://huggingface.co/breezedeus/cnocr-ppocr-en_PP-OCRv4/resolve/main/en_PP-OCRv4_rec_infer.onnx"
-    },
-    @{
-        Name = "en_dict.txt"
-        Url  = "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/en_dict.txt"
-    },
-    @{
-        Name = "ch_PP-OCRv4_rec_infer.onnx"
-        Url  = "https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx"
+        Name = "PP-OCRv6_rec_small.onnx"
+        Url  = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx"
     },
     @{
         Name = "ppocr_keys_v1.txt"
-        Url  = "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/ppocr_keys_v1.txt"
+        Url  = "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/paddleocr/utils/ppocr_keys_v1.txt"
     }
 )
 
@@ -45,5 +37,5 @@ foreach ($f in $files) {
     }
 }
 
-Write-Host "`nAll OCR models downloaded successfully."
+Write-Host "`nAll PP-OCRv6 models downloaded successfully."
 Write-Host "Models directory: $modelsDir"

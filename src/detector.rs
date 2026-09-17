@@ -34,7 +34,7 @@ impl TextDetector {
         }
 
         info!(
-            "Loading DBNet text detection model from {:?} ...",
+            "Loading PP-OCRv6 text detection model from {:?} ...",
             model_path
         );
 
@@ -54,7 +54,7 @@ impl TextDetector {
             .map_err(|e| OcrError::ModelLoadFailed(format!("Load detection model: {}", e)))?;
 
         info!(
-            "DBNet detection model loaded (intra_threads={}, inter_threads={}, parallel=true)",
+            "PP-OCRv6 detection model loaded (intra_threads={}, inter_threads={}, parallel=true)",
             intra, inter
         );
 
@@ -108,7 +108,7 @@ impl TextDetector {
             let binary_raw = binary_img.as_mut();
             for i in 0..pixel_count.min(prob_vec.len()) {
                 if prob_vec[i] >= det_thresh {
-                    binary_raw[i] = 255;
+                    unsafe { *binary_raw.get_unchecked_mut(i) = 255; }
                 }
             }
 
@@ -117,7 +117,7 @@ impl TextDetector {
 
         let contours = find_contours_with_threshold::<u32>(&binary_img, 128);
         let binary_raw = binary_img.as_ref();
-        let mut regions = Vec::new();
+        let mut regions = Vec::with_capacity(contours.len() / 2);
 
         for contour in contours {
             if contour.border_type != BorderType::Outer || contour.points.len() < 3 {
@@ -143,7 +143,6 @@ impl TextDetector {
                 continue;
             }
 
-            // Compute contour area and perimeter for unclip
             let pts = &contour.points;
             let n = pts.len();
             let mut area = 0.0f32;
@@ -159,10 +158,9 @@ impl TextDetector {
                 area += xi * yj - xj * yi;
                 perimeter += ((xj - xi).powi(2) + (yj - yi).powi(2)).sqrt();
             }
-            let area = (area.abs() / 2.0).max(1.0);
+            let area = (area.abs() * 0.5).max(1.0);
             let perimeter = perimeter.max(1.0);
 
-            // Compute region confidence score
             let clamped_max_y = max_y.min(target_h as u32 - 1);
             let clamped_max_x = max_x.min(target_w as u32 - 1);
 
@@ -172,9 +170,9 @@ impl TextDetector {
                 let row_base = cy as usize * target_w;
                 for cx in min_x..=clamped_max_x {
                     let idx = row_base + cx as usize;
-                    if binary_raw[idx] > 0 {
+                    if unsafe { *binary_raw.get_unchecked(idx) } > 0 {
                         if idx < prob_vec.len() {
-                            score_sum += prob_vec[idx];
+                            score_sum += unsafe { *prob_vec.get_unchecked(idx) };
                         }
                         score_count += 1;
                     }
@@ -191,7 +189,6 @@ impl TextDetector {
                 continue;
             }
 
-            // Expand bounding box (unclip)
             let distance = (area * self.unclip_ratio) / perimeter;
 
             let exp_min_x = (min_x as f32 - distance).max(0.0);
@@ -199,7 +196,6 @@ impl TextDetector {
             let exp_max_x = (max_x as f32 + distance).min(target_w as f32 - 1.0);
             let exp_max_y = (max_y as f32 + distance).min(target_h as f32 - 1.0);
 
-            // Scale back to original image coordinates
             let orig_min_x = (exp_min_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);
             let orig_min_y = (exp_min_y * preprocessed.scale_y).clamp(0.0, orig_h as f32);
             let orig_max_x = (exp_max_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);

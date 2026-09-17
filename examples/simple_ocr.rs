@@ -1,16 +1,8 @@
-//! Simple OCR example — recognize text from an image file.
-//!
-//! Usage:
-//! ```bash
-//! cargo run --example simple_ocr -- path/to/image.jpg
-//! ```
-
 use alvio_ocr::OcrEngine;
 use std::env;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse CLI args
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run --example simple_ocr -- <path-to-image>");
@@ -26,8 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let lang = alvio_ocr::OcrLanguage::from_code(&lang_str).unwrap_or(alvio_ocr::OcrLanguage::Indonesian);
 
-    // Initialize engine (auto-downloads models if not yet present)
-    println!("Initializing OCR engine [{}] (zero configuration) ...", lang.display_name());
+    println!("Initializing OCR engine [{}] (PP-OCRv6) ...", lang.display_name());
     let start = Instant::now();
     let engine = if let Ok(custom_dir) = env::var("OCR_MODEL_DIR") {
         OcrEngine::with_language(&custom_dir, lang)?
@@ -36,13 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("Engine ready in {:.2?}\n", start.elapsed());
 
-    // Run OCR
     println!("Processing '{}' ...", file_path);
     let start = Instant::now();
     let result = engine.recognize_file(file_path)?;
     let elapsed = start.elapsed();
 
-    // Print results
     println!("=== OCR Result ===");
     println!("Text:\n{}\n", result.text);
 
@@ -50,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (i, region) in result.regions.iter().enumerate() {
         let (x, y, x2, y2) = region.region.aabb();
         println!(
-            "  [{}] conf={:.4} bbox=({:.0},{:.0})-({:.0},{:.0}) → \"{}\"",
+            "  [{}] conf={:.4} bbox=({:.0},{:.0})-({:.0},{:.0}) -> \"{}\"",
             i + 1,
             region.confidence,
             x,
@@ -61,6 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("\nProcessed in {:.2?}", elapsed);
+    println!("\n--- Lines ({}) ---", result.lines.len());
+    for line in &result.lines {
+        println!("  Line {}: \"{}\"", line.line_number, line.text);
+    }
+
+    println!("\nTotal processed in {:.2?} (confidence: {:.1}%)", elapsed, result.confidence * 100.0);
     Ok(())
 }

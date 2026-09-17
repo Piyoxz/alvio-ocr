@@ -1,21 +1,4 @@
 use std::path::PathBuf;
-
-/// Language presets for OCR text recognition.
-///
-/// Text detection (`ch_PP-OCRv4_det_infer.onnx`) is language-agnostic and detects
-/// bounding boxes for any written script. The recognition model and dictionary determine
-/// the recognized character set.
-///
-/// # Supported Presets
-/// - [`OcrLanguage::Indonesian`] / [`OcrLanguage::English`]:
-///   Uses the Latin alphabet PP-OCRv4 model (`en_PP-OCRv4_rec_infer.onnx` + `en_dict.txt`).
-///   Fastest inference (~97 classes: A-Z, a-z, 0-9, standard symbols).
-///   Ideal for Indonesian documents (KTP, SIM, NPWP, receipts, official letters) and English text.
-///
-/// - [`OcrLanguage::Multilingual`] / [`OcrLanguage::Chinese`]:
-///   Uses the universal PP-OCRv4 model (`ch_PP-OCRv4_rec_infer.onnx` + `ppocr_keys_v1.txt`).
-///   Recognizes 6,625+ characters including Chinese (Hanzi), Japanese (Kanji), Latin alphabet
-///   (Indonesian/English), numbers, and mathematical symbols.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,24 +32,18 @@ impl OcrLanguage {
     }
 
     pub fn model_filename(&self) -> &'static str {
-        match self {
-            Self::Indonesian | Self::English => "en_PP-OCRv4_rec_infer.onnx",
-            Self::Multilingual | Self::Chinese => "ch_PP-OCRv4_rec_infer.onnx",
-        }
+        "PP-OCRv6_rec_small.onnx"
     }
 
     pub fn dict_filename(&self) -> &'static str {
-        match self {
-            Self::Indonesian | Self::English => "en_dict.txt",
-            Self::Multilingual | Self::Chinese => "ppocr_keys_v1.txt",
-        }
+        "ppocrv6_keys.txt"
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Indonesian => "Indonesian (Latin)",
             Self::English => "English (Latin)",
-            Self::Multilingual => "Multilingual (Latin + CJK + Symbols)",
+            Self::Multilingual => "Multilingual (50 Languages)",
             Self::Chinese => "Chinese (Hanzi)",
         }
     }
@@ -76,33 +53,33 @@ impl OcrLanguage {
             Self::Indonesian => LanguageInfo {
                 id: "id",
                 name: "Indonesian",
-                model_name: "en_PP-OCRv4_rec_infer.onnx",
-                character_count: 95,
-                description: "Latin script, letters A-Z, numbers, and standard symbols. Fast inference, ideal for Indonesian ID cards (KTP, SIM, NPWP), receipts, invoices, and standard documents.",
+                model_name: "PP-OCRv6_rec_small.onnx",
+                character_count: 18708,
+                description: "Unified PP-OCRv6 model supporting 50 languages. Optimized for Indonesian documents (KTP, SIM, NPWP, receipts, invoices).",
                 auto_download: true,
             },
             Self::English => LanguageInfo {
                 id: "en",
                 name: "English",
-                model_name: "en_PP-OCRv4_rec_infer.onnx",
-                character_count: 95,
-                description: "Latin script, letters A-Z, numbers, and standard punctuation. Fast inference optimized for Latin alphabets.",
+                model_name: "PP-OCRv6_rec_small.onnx",
+                character_count: 18708,
+                description: "Unified PP-OCRv6 model supporting 50 languages. Full Latin alphabet, numbers, and punctuation support.",
                 auto_download: true,
             },
             Self::Multilingual => LanguageInfo {
                 id: "multi",
-                name: "Multilingual / Universal",
-                model_name: "ch_PP-OCRv4_rec_infer.onnx",
-                character_count: 6625,
-                description: "Supports 6,625+ characters including Latin (Indonesian, English, European languages), CJK (Chinese Hanzi, Japanese Kanji), numbers, and mathematical symbols.",
+                name: "Multilingual",
+                model_name: "PP-OCRv6_rec_small.onnx",
+                character_count: 18708,
+                description: "Unified PP-OCRv6 model supporting 50 languages with native script recognition.",
                 auto_download: true,
             },
             Self::Chinese => LanguageInfo {
-                id: "zh",
-                name: "Chinese (Simplified & Traditional)",
-                model_name: "ch_PP-OCRv4_rec_infer.onnx",
-                character_count: 6625,
-                description: "Simplified and Traditional Chinese characters along with Latin alphabet and digits.",
+                id: "ch",
+                name: "Chinese",
+                model_name: "PP-OCRv6_rec_small.onnx",
+                character_count: 18708,
+                description: "Unified PP-OCRv6 model supporting Simplified and Traditional Chinese.",
                 auto_download: true,
             },
         }
@@ -123,84 +100,33 @@ pub fn supported_languages() -> Vec<LanguageInfo> {
     OcrLanguage::all().iter().map(|lang| lang.info()).collect()
 }
 
-/// Configuration for the OCR engine.
-///
-/// Use [`OcrConfig::default_with_model_dir`] for quick setup, or the builder
-/// methods for fine-grained control.
-///
-/// # Example
-/// ```no_run
-/// use alvio_ocr::{OcrConfig, OcrLanguage};
-///
-/// // Quick setup — default to Indonesian/English
-/// let config = OcrConfig::default_with_model_dir("./models/ocr");
-///
-/// // Quick setup — with Multilingual support
-/// let config = OcrConfig::default_with_language("./models/ocr", OcrLanguage::Multilingual);
-///
-/// // Fine-tuned setup
-/// let config = OcrConfig::default_with_model_dir("./models/ocr")
-///     .det_max_side_len(1280)
-///     .det_threshold(0.25)
-///     .rec_threshold(0.4)
-///     .enable_enhancement(true);
-/// ```
 #[derive(Debug, Clone)]
 pub struct OcrConfig {
-    // --- Model paths ---
-    /// Selected language preset.
     pub language: OcrLanguage,
-    /// Path to the DBNet detection ONNX model.
     pub detection_model_path: PathBuf,
-    /// Path to the SVTR recognition ONNX model.
     pub recognition_model_path: PathBuf,
-    /// Path to the character dictionary file.
     pub dictionary_path: PathBuf,
 
-    // --- Detection parameters ---
-    /// Binarization threshold for the detection probability map. Default: 0.3.
     pub det_threshold: f32,
-    /// Minimum confidence for a detected bounding box. Default: 0.5.
     pub det_box_thresh: f32,
-    /// Expansion ratio for detected text boxes (unclip). Default: 1.5.
     pub unclip_ratio: f32,
-    /// Maximum side length for detection input resize. Higher = more accurate but slower.
-    /// Default: **960** (optimized from 736).
     pub det_max_side_len: u32,
 
-    // --- Recognition parameters ---
-    /// Minimum confidence for a recognized text to be included. Default: 0.5.
     pub rec_threshold: f32,
 
-    // --- NMS parameters ---
-    /// IoU threshold for Non-Maximum Suppression. Default: 0.5.
     pub nms_iou_threshold: f32,
 
-    // --- Enhancement ---
-    /// Enable adaptive image enhancement (auto-contrast + sharpen) for low-quality inputs.
-    /// Default: true.
     pub enhancement_enabled: bool,
-    /// Variance threshold below which enhancement is applied. Default: 1500.0.
     pub enhancement_variance_threshold: f32,
 
-    // --- Threading ---
-    /// Number of intra-op threads for ONNX. 0 = auto (num_cpus / 2). Default: 0.
     pub intra_threads: usize,
-    /// Number of inter-op threads for ONNX parallel execution. 0 = auto. Default: 0.
     pub inter_threads: usize,
 
-    // --- Limits ---
-    /// Maximum image width allowed. Default: 4096.
     pub max_image_width: u32,
-    /// Maximum image height allowed. Default: 4096.
     pub max_image_height: u32,
 
-    // --- PDF-specific (only with "pdf" feature) ---
-    /// Path to the pdfium native library (optional, auto-detected if None).
     pub pdfium_path: Option<PathBuf>,
-    /// Maximum number of PDF pages to process. Default: 50.
     pub max_pdf_pages: usize,
-    /// Minimum area (w*h) for an embedded PDF image to be OCR'd. Default: 10000.
     pub pdf_embedded_img_min_area: u32,
 }
 
@@ -212,63 +138,57 @@ impl Default for OcrConfig {
 }
 
 impl OcrConfig {
-    /// Create a config with default parameters, pointing at a model directory.
-    ///
-    /// Expects the following files inside `model_dir`:
-    /// - `ch_PP-OCRv4_det_infer.onnx` (detection model)
-    /// - `en_PP-OCRv4_rec_infer.onnx` (recognition model)
-    /// - `en_dict.txt` (character dictionary)
     pub fn default_with_model_dir(model_dir: impl Into<PathBuf>) -> Self {
         let dir = model_dir.into();
+        let detection_model_path = if dir.join("PP-OCRv6_det_small.onnx").exists() {
+            dir.join("PP-OCRv6_det_small.onnx")
+        } else if dir.join("ppocrv6_small_det.onnx").exists() {
+            dir.join("ppocrv6_small_det.onnx")
+        } else {
+            dir.join("PP-OCRv6_det_small.onnx")
+        };
+        let recognition_model_path = if dir.join("PP-OCRv6_rec_small.onnx").exists() {
+            dir.join("PP-OCRv6_rec_small.onnx")
+        } else if dir.join("ppocrv6_small_rec.onnx").exists() {
+            dir.join("ppocrv6_small_rec.onnx")
+        } else {
+            dir.join("PP-OCRv6_rec_small.onnx")
+        };
+        let dictionary_path = if dir.join("ppocrv6_keys.txt").exists() {
+            dir.join("ppocrv6_keys.txt")
+        } else {
+            dir.join("ppocr_keys_v1.txt")
+        };
         Self {
             language: OcrLanguage::Indonesian,
-            detection_model_path: dir.join("ch_PP-OCRv4_det_infer.onnx"),
-            recognition_model_path: dir.join("en_PP-OCRv4_rec_infer.onnx"),
-            dictionary_path: dir.join("en_dict.txt"),
+            detection_model_path,
+            recognition_model_path,
+            dictionary_path,
 
-            // Detection — A1: Higher resolution default
-            det_threshold: 0.3,
-            det_box_thresh: 0.5,
-            unclip_ratio: 1.5,
-            det_max_side_len: 960,
+            det_threshold: 0.25,
+            det_box_thresh: 0.4,
+            unclip_ratio: 1.6,
+            det_max_side_len: 1024,
 
-            // Recognition
-            rec_threshold: 0.5,
+            rec_threshold: 0.4,
 
-            // NMS — A5
-            nms_iou_threshold: 0.5,
+            nms_iou_threshold: 0.4,
 
-            // Enhancement — A4
             enhancement_enabled: true,
             enhancement_variance_threshold: 1500.0,
 
-            // Threading — S3: will be resolved to actual values at engine init
             intra_threads: 0,
             inter_threads: 0,
 
-            // Limits
             max_image_width: 4096,
             max_image_height: 4096,
 
-            // PDF
             pdfium_path: None,
             max_pdf_pages: 50,
             pdf_embedded_img_min_area: 10_000,
         }
     }
 
-    /// Create a config with a specific language preset pointing at a model directory.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use alvio_ocr::{OcrConfig, OcrLanguage};
-    ///
-    /// // Indonesian & English (fastest Latin model, default)
-    /// let config = OcrConfig::default_with_language("./models/ocr", OcrLanguage::Indonesian);
-    ///
-    /// // Multilingual (Latin + Chinese + Kanji + symbols)
-    /// let config = OcrConfig::default_with_language("./models/ocr", OcrLanguage::Multilingual);
-    /// ```
     pub fn default_with_language(model_dir: impl Into<PathBuf>, lang: OcrLanguage) -> Self {
         let dir = model_dir.into();
         let mut config = Self::default_with_model_dir(&dir);
@@ -278,10 +198,6 @@ impl OcrConfig {
         config
     }
 
-    // --- Builder methods ---
-
-    /// Switch language preset, updating `recognition_model_path` and `dictionary_path`
-    /// relative to the current model directory.
     pub fn with_language(mut self, lang: OcrLanguage) -> Self {
         self.language = lang;
         if let Some(parent) = self.recognition_model_path.parent().map(|p| p.to_path_buf()) {
@@ -291,7 +207,6 @@ impl OcrConfig {
         self
     }
 
-    /// Set language preset explicitly.
     pub fn language(self, lang: OcrLanguage) -> Self {
         self.with_language(lang)
     }
@@ -386,7 +301,6 @@ impl OcrConfig {
         self
     }
 
-    /// Resolve auto-detect values (threads = 0 → actual CPU count).
     pub(crate) fn resolve_threads(&self) -> (usize, usize) {
         let cpus = num_cpus::get().max(1);
         let intra = if self.intra_threads == 0 {

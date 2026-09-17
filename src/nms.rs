@@ -1,11 +1,6 @@
-//! Non-Maximum Suppression (NMS) for text detection regions.
-//!
-//! Removes overlapping bounding boxes, keeping only the most confident ones.
-//! This both improves accuracy (no duplicate text) and speed (fewer recognition calls).
-
 use crate::types::TextRegion;
 
-/// Compute Intersection-over-Union (IoU) between two axis-aligned bounding boxes.
+#[inline(always)]
 fn iou(a: &TextRegion, b: &TextRegion) -> f32 {
     let (a_x1, a_y1, a_x2, a_y2) = a.aabb();
     let (b_x1, b_y1, b_x2, b_y2) = b.aabb();
@@ -30,20 +25,11 @@ fn iou(a: &TextRegion, b: &TextRegion) -> f32 {
     }
 }
 
-/// Apply greedy Non-Maximum Suppression to a list of text regions.
-///
-/// Regions are sorted by confidence (descending). For each region, all remaining
-/// regions with IoU above `iou_threshold` are suppressed (removed).
-///
-/// # Arguments
-/// * `regions` — detected text regions
-/// * `iou_threshold` — IoU threshold above which a region is suppressed (typical: 0.5)
 pub fn apply_nms(mut regions: Vec<TextRegion>, iou_threshold: f32) -> Vec<TextRegion> {
     if regions.len() <= 1 {
         return regions;
     }
 
-    // Sort by confidence descending
     regions.sort_by(|a, b| {
         b.confidence
             .partial_cmp(&a.confidence)
@@ -98,8 +84,8 @@ mod tests {
     fn test_nms_removes_overlapping() {
         let regions = vec![
             rect(0.0, 0.0, 100.0, 50.0, 0.9),
-            rect(5.0, 2.0, 105.0, 52.0, 0.7), // heavily overlaps with first
-            rect(200.0, 200.0, 300.0, 250.0, 0.8), // no overlap
+            rect(5.0, 2.0, 105.0, 52.0, 0.7),
+            rect(200.0, 200.0, 300.0, 250.0, 0.8),
         ];
         let result = apply_nms(regions, 0.5);
         assert_eq!(result.len(), 2);
