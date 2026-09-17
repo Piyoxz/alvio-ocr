@@ -251,6 +251,9 @@ impl OcrEngine {
                     .map_err(|e| OcrError::InvalidImage(format!("Decode image: {}", e)))?;
 
                 let (w, h) = img.dimensions();
+                if w == 0 || h == 0 {
+                    return Err(OcrError::InvalidImage("Image has zero width or height".to_string()));
+                }
                 if w > self.config.max_image_width || h > self.config.max_image_height {
                     return Err(OcrError::ImageTooLarge(format!(
                         "{}x{} exceeds max {}x{}",
@@ -266,8 +269,11 @@ impl OcrEngine {
     }
 
     pub fn recognize_image(&self, img: &DynamicImage) -> Result<OcrResult, OcrError> {
-        let start = Instant::now();
         let (w, h) = img.dimensions();
+        if w == 0 || h == 0 {
+            return Err(OcrError::InvalidImage("Image has zero width or height".to_string()));
+        }
+        let start = Instant::now();
         debug!("OCR on image ({}x{})...", w, h);
 
         let processed_img = if self.config.enhancement_enabled {

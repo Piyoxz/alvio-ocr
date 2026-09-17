@@ -64,6 +64,9 @@ fn auto_contrast(img: &RgbImage) -> RgbImage {
 
 fn box_blur_3x3(gray: &GrayImage) -> GrayImage {
     let (w, h) = gray.dimensions();
+    if w <= 1 || h <= 1 {
+        return gray.clone();
+    }
     let wu = w as usize;
     let hu = h as usize;
     let src = gray.as_raw();

@@ -106,7 +106,8 @@ impl TextDetector {
 
             let mut binary_img = GrayImage::new(target_w as u32, target_h as u32);
             let binary_raw = binary_img.as_mut();
-            for i in 0..pixel_count.min(prob_vec.len()) {
+            let limit = pixel_count.min(prob_vec.len()).min(binary_raw.len());
+            for i in 0..limit {
                 if prob_vec[i] >= det_thresh {
                     unsafe { *binary_raw.get_unchecked_mut(i) = 255; }
                 }
@@ -170,7 +171,7 @@ impl TextDetector {
                 let row_base = cy as usize * target_w;
                 for cx in min_x..=clamped_max_x {
                     let idx = row_base + cx as usize;
-                    if unsafe { *binary_raw.get_unchecked(idx) } > 0 {
+                    if idx < binary_raw.len() && unsafe { *binary_raw.get_unchecked(idx) } > 0 {
                         if idx < prob_vec.len() {
                             score_sum += unsafe { *prob_vec.get_unchecked(idx) };
                         }

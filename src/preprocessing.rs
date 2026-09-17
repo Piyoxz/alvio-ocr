@@ -66,8 +66,8 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
         }
     }
 
-    let tensor =
-        Array4::from_shape_vec((1, 3, th, tw), data).expect("shape mismatch in det preprocessing");
+    let tensor = Array4::from_shape_vec((1, 3, th, tw), data)
+        .unwrap_or_else(|_| Array4::zeros((1, 3, th, tw)));
 
     DetPreprocessed {
         tensor,
@@ -113,7 +113,8 @@ pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
         }
     }
 
-    Array4::from_shape_vec((1, 3, th, tw), data).expect("shape mismatch in rec preprocessing")
+    Array4::from_shape_vec((1, 3, th, tw), data)
+        .unwrap_or_else(|_| Array4::zeros((1, 3, th, tw)))
 }
 
 pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32>) {
@@ -172,7 +173,7 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
     }
 
     let tensor = Array4::from_shape_vec((batch_size, 3, th, max_w), data)
-        .expect("shape mismatch in batch rec preprocessing");
+        .unwrap_or_else(|_| Array4::zeros((batch_size, 3, th, max_w)));
 
     (tensor, target_widths)
 }
@@ -184,6 +185,12 @@ fn fast_resize_rgb(img: &DynamicImage, target_w: u32, target_h: u32) -> RgbImage
 
 fn fast_resize_rgb_from_raw(rgb: &RgbImage, target_w: u32, target_h: u32) -> RgbImage {
     let (src_w, src_h) = rgb.dimensions();
+    let target_w = target_w.max(1);
+    let target_h = target_h.max(1);
+
+    if src_w == 0 || src_h == 0 {
+        return RgbImage::new(target_w, target_h);
+    }
 
     if src_w == target_w && src_h == target_h {
         return rgb.clone();
@@ -191,9 +198,10 @@ fn fast_resize_rgb_from_raw(rgb: &RgbImage, target_w: u32, target_h: u32) -> Rgb
 
     let mut src_bytes = rgb.as_raw().clone();
 
-    let src_image =
-        FirImage::from_slice_u8(src_w, src_h, &mut src_bytes, PixelType::U8x3)
-            .expect("failed to create source FIR image");
+    let src_image = match FirImage::from_slice_u8(src_w, src_h, &mut src_bytes, PixelType::U8x3) {
+        Ok(img) => img,
+        Err(_) => return RgbImage::new(target_w, target_h),
+    };
 
     let mut dst_image = FirImage::new(target_w, target_h, PixelType::U8x3);
 
@@ -201,10 +209,10 @@ fn fast_resize_rgb_from_raw(rgb: &RgbImage, target_w: u32, target_h: u32) -> Rgb
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
         fast_image_resize::FilterType::Bilinear,
     ));
-    resizer
-        .resize(&src_image, &mut dst_image, Some(&options))
-        .expect("resize failed");
+    if resizer.resize(&src_image, &mut dst_image, Some(&options)).is_err() {
+        return RgbImage::new(target_w, target_h);
+    }
 
     let dst_raw = dst_image.into_vec();
-    RgbImage::from_raw(target_w, target_h, dst_raw).expect("failed to create output RgbImage")
+    RgbImage::from_raw(target_w, target_h, dst_raw).unwrap_or_else(|| RgbImage::new(target_w, target_h))
 }
