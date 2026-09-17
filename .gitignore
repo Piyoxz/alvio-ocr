@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Exclude heavy binaries (auto-downloaded at runtime)
+/models/
+/libs/
+*.onnx
+*.dll
+*.so
+*.dylib
+*.tgz
