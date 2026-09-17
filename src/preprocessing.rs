@@ -1,16 +1,7 @@
-//! Optimized image preprocessing for detection and recognition.
-//!
-//! Key optimizations:
-//! - **S1**: SIMD-accelerated resize via `fast_image_resize` (10-15x faster than image::resize)
-//! - **S4**: Zero-copy tensor construction — single allocation, direct channel-first write
-//! - **S7**: Recognition preprocessing avoids unnecessary DynamicImage clone
-//! - **A2**: Bilinear interpolation for detection (smoother edges → better detection)
-
 use fast_image_resize::{images::Image as FirImage, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image::{DynamicImage, GenericImageView, RgbImage};
 use ndarray::Array4;
 
-/// Result of detection preprocessing: the normalized tensor and scale factors.
 pub struct DetPreprocessed {
     pub tensor: Array4<f32>,
     pub target_w: u32,
@@ -19,12 +10,6 @@ pub struct DetPreprocessed {
     pub scale_y: f32,
 }
 
-/// Preprocess an image for the detection model (DBNet).
-///
-/// Optimizations applied:
-/// - **S1**: Uses `fast_image_resize` with SIMD (AVX2/SSE4.1) for 10-15x faster resize
-/// - **A2**: Bilinear interpolation instead of Nearest for better edge quality
-/// - **S4**: Single allocation for the tensor buffer — no intermediate R/G/B buffers
 pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreprocessed {
     let (orig_w, orig_h) = img.dimensions();
     let max_side = orig_w.max(orig_h);
@@ -43,7 +28,6 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
     let scale_x = orig_w as f32 / target_w as f32;
     let scale_y = orig_h as f32 / target_h as f32;
 
-    // S1 + A2: SIMD-accelerated bilinear resize
     let resized_rgb = fast_resize_rgb(img, target_w, target_h);
     let raw = resized_rgb.as_raw();
 
@@ -51,7 +35,6 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
     let th = target_h as usize;
     let total = tw * th;
 
-    // ImageNet normalization constants
     let mean_r = 0.485f32;
     let mean_g = 0.456f32;
     let mean_b = 0.406f32;
@@ -60,7 +43,6 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
     let inv_std_b = 1.0f32 / 0.225f32;
     let inv_255 = 1.0f32 / 255.0f32;
 
-    // S4: Single allocation — write directly in channel-first (NCHW) layout
     let mut data = vec![0.0f32; 3 * total];
     let (plane_r, rest) = data.split_at_mut(total);
     let (plane_g, plane_b) = rest.split_at_mut(total);
@@ -90,19 +72,12 @@ pub fn preprocess_detection(img: &DynamicImage, max_side_len: u32) -> DetPreproc
     }
 }
 
-/// Preprocess a cropped text region for the recognition model (SVTR).
-///
-/// Optimizations applied:
-/// - **S1**: SIMD-accelerated resize
-/// - **S4**: Zero-copy single-allocation tensor
-/// - **S7**: Works directly with RgbImage raw bytes, no DynamicImage intermediary
 pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
     let (crop_w, crop_h) = crop.dimensions();
     let target_h = 48u32;
     let ratio = crop_w as f32 / crop_h.max(1) as f32;
     let target_w = ((target_h as f32 * ratio).round() as u32).clamp(16, 320);
 
-    // S1 + S7: SIMD resize directly from RgbImage, skip DynamicImage::clone()
     let resized = fast_resize_rgb_from_raw(crop, target_w, target_h);
     let raw = resized.as_raw();
 
@@ -111,7 +86,6 @@ pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
     let total = tw * th;
     let inv_127_5 = 1.0f32 / 127.5f32;
 
-    // S4: Single allocation — direct channel-first write
     let mut data = vec![0.0f32; 3 * total];
     let (plane_r, rest) = data.split_at_mut(total);
     let (plane_g, plane_b) = rest.split_at_mut(total);
@@ -132,10 +106,6 @@ pub fn preprocess_recognition(crop: &RgbImage) -> Array4<f32> {
     Array4::from_shape_vec((1, 3, th, tw), data).expect("shape mismatch in rec preprocessing")
 }
 
-/// Preprocess multiple crops into a single batched tensor for batch recognition (S2).
-///
-/// All crops are resized to height=48, padded to the maximum width with zeros,
-/// and stacked into a single NCHW tensor with batch dimension.
 pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32>) {
     if crops.is_empty() {
         return (
@@ -146,7 +116,6 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
 
     let target_h = 48u32;
 
-    // Calculate target widths for each crop
     let target_widths: Vec<u32> = crops
         .iter()
         .map(|crop| {
@@ -162,13 +131,10 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
     let total_per_image = max_w * th;
     let inv_127_5 = 1.0f32 / 127.5f32;
 
-    // S4: Single allocation for entire batch
     let mut data = vec![0.0f32; batch_size * 3 * total_per_image];
 
     for (b, (crop, &tw)) in crops.iter().zip(target_widths.iter()).enumerate() {
         let tw_usize = tw as usize;
-
-        // S1: SIMD resize
         let resized = fast_resize_rgb_from_raw(crop, tw, target_h);
         let raw = resized.as_raw();
         let stride = tw_usize * 3;
@@ -188,7 +154,6 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
                 data[g_offset + idx] = raw[px + 1] as f32 * inv_127_5 - 1.0;
                 data[b_offset + idx] = raw[px + 2] as f32 * inv_127_5 - 1.0;
             }
-            // Remaining pixels (tw..max_w) stay at 0.0 (zero-padded)
         }
     }
 
@@ -198,44 +163,34 @@ pub fn preprocess_recognition_batch(crops: &[RgbImage]) -> (Array4<f32>, Vec<u32
     (tensor, target_widths)
 }
 
-/// SIMD-accelerated resize from DynamicImage to RgbImage using `fast_image_resize`.
 fn fast_resize_rgb(img: &DynamicImage, target_w: u32, target_h: u32) -> RgbImage {
     let rgb = img.to_rgb8();
     fast_resize_rgb_from_raw(&rgb, target_w, target_h)
 }
 
-/// SIMD-accelerated resize from RgbImage using `fast_image_resize`.
-///
-/// Uses bilinear interpolation (A2) and AVX2/SSE4.1 SIMD when available.
 fn fast_resize_rgb_from_raw(rgb: &RgbImage, target_w: u32, target_h: u32) -> RgbImage {
     let (src_w, src_h) = rgb.dimensions();
 
-    // Early return if no resize needed
     if src_w == target_w && src_h == target_h {
         return rgb.clone();
     }
 
-    // FirImage::from_slice_u8 requires &mut [u8], so we need a mutable copy
     let mut src_bytes = rgb.as_raw().clone();
 
-    // Create source FIR image from raw bytes
     let src_image =
         FirImage::from_slice_u8(src_w, src_h, &mut src_bytes, PixelType::U8x3)
             .expect("failed to create source FIR image");
 
-    // Create destination buffer
     let mut dst_image = FirImage::new(target_w, target_h, PixelType::U8x3);
 
-    // Resize with bilinear interpolation (A2) + SIMD acceleration (S1)
     let mut resizer = Resizer::new();
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
         fast_image_resize::FilterType::Bilinear,
     ));
     resizer
         .resize(&src_image, &mut dst_image, Some(&options))
-        .expect("SIMD resize failed");
+        .expect("resize failed");
 
-    // Convert back to RgbImage
     let dst_raw = dst_image.into_vec();
     RgbImage::from_raw(target_w, target_h, dst_raw).expect("failed to create output RgbImage")
 }

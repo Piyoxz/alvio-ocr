@@ -1,18 +1,10 @@
-//! Reading order sorting and text reconstruction.
-//!
-//! Optimization A6: Improved column detection with height-adaptive line clustering.
+use crate::types::{BoundingBox, OcrText, TextLine};
 
-use crate::types::OcrText;
-
-/// Sort recognized text items into natural reading order (top-to-bottom, left-to-right).
-///
-/// Automatically detects two-column layouts and sorts each column separately.
 pub fn sort_reading_order(items: Vec<OcrText>) -> Vec<OcrText> {
     if items.len() <= 1 {
         return items;
     }
 
-    // Compute page bounds
     let mut min_x_total = f32::MAX;
     let mut max_x_total = f32::MIN;
     for item in &items {
@@ -23,7 +15,6 @@ pub fn sort_reading_order(items: Vec<OcrText>) -> Vec<OcrText> {
     let total_width = (max_x_total - min_x_total).max(1.0);
     let center_x = min_x_total + total_width / 2.0;
 
-    // A6: Height-adaptive gutter margin
     let avg_height: f32 = items.iter().map(|i| i.region.height()).sum::<f32>() / items.len() as f32;
     let gutter_margin = (total_width * 0.05).max(avg_height * 0.5);
 
@@ -56,14 +47,11 @@ pub fn sort_reading_order(items: Vec<OcrText>) -> Vec<OcrText> {
     }
 }
 
-/// Group items into lines based on vertical overlap, then sort lines top-to-bottom
-/// and items within each line left-to-right.
 fn sort_lines(mut items: Vec<OcrText>) -> Vec<OcrText> {
     if items.is_empty() {
         return items;
     }
 
-    // Sort by top Y coordinate first
     items.sort_by(|a, b| {
         let (_, a_min_y, _, _) = a.region.aabb();
         let (_, b_min_y, _, _) = b.region.aabb();
@@ -72,7 +60,6 @@ fn sort_lines(mut items: Vec<OcrText>) -> Vec<OcrText> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Group into lines using vertical overlap
     let mut lines: Vec<Vec<OcrText>> = Vec::new();
 
     for item in items {
@@ -104,14 +91,12 @@ fn sort_lines(mut items: Vec<OcrText>) -> Vec<OcrText> {
         }
     }
 
-    // Sort lines by vertical center
     lines.sort_by(|a, b| {
         let a_y = a.first().map(|i| i.region.center_y()).unwrap_or(0.0);
         let b_y = b.first().map(|i| i.region.center_y()).unwrap_or(0.0);
         a_y.partial_cmp(&b_y).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Sort items within each line left-to-right
     let mut result = Vec::new();
     for mut line in lines {
         line.sort_by(|a, b| {
@@ -127,34 +112,94 @@ fn sort_lines(mut items: Vec<OcrText>) -> Vec<OcrText> {
     result
 }
 
-/// Reconstruct a full text string from sorted text items,
-/// inserting newlines between lines and spaces within lines.
-pub fn reconstruct_text(items: &[OcrText]) -> String {
-    if items.is_empty() {
-        return String::new();
+pub fn group_into_lines(sorted_items: Vec<OcrText>) -> (Vec<OcrText>, Vec<TextLine>) {
+    if sorted_items.is_empty() {
+        return (Vec::new(), Vec::new());
     }
 
-    let mut full_text = String::new();
+    let mut lines_raw: Vec<Vec<OcrText>> = Vec::new();
+    let mut current_line: Vec<OcrText> = Vec::new();
     let mut last_y = f32::MIN;
 
-    for item in items {
+    for item in sorted_items {
         let (_, min_y, _, max_y) = item.region.aabb();
         let h = (max_y - min_y).max(1.0);
 
         if last_y == f32::MIN {
-            full_text.push_str(&item.text);
+            current_line.push(item);
         } else {
             let delta_y = (min_y - last_y).abs();
             if delta_y > h * 0.5 {
-                full_text.push('\n');
-            } else {
-                full_text.push(' ');
+                if !current_line.is_empty() {
+                    lines_raw.push(std::mem::take(&mut current_line));
+                }
             }
-            full_text.push_str(&item.text);
+            current_line.push(item);
         }
-
         last_y = min_y;
     }
 
-    full_text
+    if !current_line.is_empty() {
+        lines_raw.push(current_line);
+    }
+
+    let mut flat_items = Vec::new();
+    let mut structured_lines = Vec::new();
+
+    for (line_idx, raw_line) in lines_raw.into_iter().enumerate() {
+        let line_number = line_idx + 1;
+        let line_text = raw_line
+            .iter()
+            .map(|w| w.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let line_conf = if raw_line.is_empty() {
+            0.0
+        } else {
+            raw_line.iter().map(|w| w.confidence).sum::<f32>() / raw_line.len() as f32
+        };
+
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+
+        let mut updated_words = Vec::new();
+        for mut word in raw_line {
+            word.line_number = line_number;
+            let (bx1, by1, bx2, by2) = word.region.aabb();
+            if bx1 < min_x { min_x = bx1; }
+            if by1 < min_y { min_y = by1; }
+            if bx2 > max_x { max_x = bx2; }
+            if by2 > max_y { max_y = by2; }
+            word.bbox = BoundingBox::new(bx1, by1, bx2, by2);
+            flat_items.push(word.clone());
+            updated_words.push(word);
+        }
+
+        let line_bbox = if min_x == f32::MAX {
+            BoundingBox::default()
+        } else {
+            BoundingBox::new(min_x, min_y, max_x, max_y)
+        };
+
+        structured_lines.push(TextLine {
+            line_number,
+            text: line_text,
+            confidence: line_conf,
+            bbox: line_bbox,
+            words: updated_words,
+        });
+    }
+
+    (flat_items, structured_lines)
+}
+
+pub fn reconstruct_text_from_lines(lines: &[TextLine]) -> String {
+    lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }

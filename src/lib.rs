@@ -66,7 +66,13 @@ pub mod types;
 pub mod pdf;
 
 // Re-export public API
-pub use config::{OcrConfig, OcrLanguage};
+pub use config::{supported_languages, LanguageInfo, OcrConfig, OcrLanguage};
+pub use document::{
+    is_supported_extension, supported_formats, supported_formats_string, SUPPORTED_FORMATS,
+};
 pub use engine::OcrEngine;
-pub use error::OcrError;
-pub use types::{OcrText, PageResult, Point, RecognitionResult, TextRegion, TextSource};
+pub use error::{OcrError, Result};
+pub use types::{
+    BatchItem, BatchResult, BoundingBox, DocumentFormat, OcrResult, OcrText, PageResult, PdfResult,
+    Point, RecognitionResult, TextLine, TextRegion, TextSource,
+};

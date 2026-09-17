@@ -1,56 +1,29 @@
-//! The main OCR engine — single entry point for all OCR operations.
-//!
-//! # Quick Start
-//! ```no_run
-//! use alvio_ocr::OcrEngine;
-//!
-//! let engine = OcrEngine::new("./models/ocr").unwrap();
-//!
-//! // OCR from a file
-//! let result = engine.recognize_file("document.png").unwrap();
-//! println!("{}", result.text);
-//!
-//! // OCR from bytes
-//! let bytes = std::fs::read("photo.jpg").unwrap();
-//! let result = engine.recognize_bytes(&bytes).unwrap();
-//! ```
-
 use crate::{
     config::OcrConfig,
     detector::TextDetector,
-    document::{detect_format, DocumentFormat},
+    document::{detect_format, validate_file_path},
     enhancement::enhance_if_needed,
     error::OcrError,
-    postprocessing::{reconstruct_text, sort_reading_order},
+    postprocessing::{group_into_lines, reconstruct_text_from_lines, sort_reading_order},
     recognizer::TextRecognizer,
-    types::RecognitionResult,
+    types::{BatchItem, BatchResult, DocumentFormat, OcrResult},
 };
+
+#[cfg(feature = "pdf")]
+use crate::types::{PageResult, PdfResult};
 use image::{DynamicImage, GenericImageView, ImageReader};
-use std::{io::Cursor, path::Path, sync::Arc};
+use rayon::prelude::*;
+use std::{
+    io::{Cursor, Read},
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 use tracing::debug;
 
 #[cfg(feature = "pdf")]
-use crate::{pdf::PdfProcessor, types::PageResult};
+use crate::pdf::PdfProcessor;
 
-/// High-performance OCR engine.
-///
-/// Internally holds the loaded ONNX models (detection + recognition) and
-/// configuration. Thread-safe — can be shared across threads via `Arc`.
-///
-/// # Example
-/// ```no_run
-/// use alvio_ocr::{OcrEngine, OcrConfig};
-///
-/// // Simple: just point at the model directory
-/// let engine = OcrEngine::new("./models/ocr").unwrap();
-///
-/// // Advanced: full config control
-/// let config = OcrConfig::default_with_model_dir("./models/ocr")
-///     .det_max_side_len(1280)
-///     .rec_threshold(0.4)
-///     .enable_enhancement(true);
-/// let engine = OcrEngine::with_config(config).unwrap();
-/// ```
 pub struct OcrEngine {
     detector: Arc<TextDetector>,
     recognizer: Arc<TextRecognizer>,
@@ -60,30 +33,10 @@ pub struct OcrEngine {
 }
 
 impl OcrEngine {
-    /// Create an OCR engine with automatic model downloading and default language (Indonesian/Latin).
-    ///
-    /// Truly zero configuration — models are searched locally or downloaded
-    /// automatically into the standard cache directory (`~/.alvio-ocr/models`).
-    ///
-    /// # Example
-    /// ```no_run
-    /// use alvio_ocr::OcrEngine;
-    ///
-    /// let engine = OcrEngine::auto().unwrap();
-    /// let result = engine.recognize_file("photo.jpg").unwrap();
-    /// ```
     pub fn auto() -> Result<Self, OcrError> {
         Self::auto_with_language(crate::config::OcrLanguage::Indonesian)
     }
 
-    /// Create an OCR engine with automatic model downloading for a specific language preset.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use alvio_ocr::{OcrEngine, OcrLanguage};
-    ///
-    /// let engine = OcrEngine::auto_with_language(OcrLanguage::Multilingual).unwrap();
-    /// ```
     pub fn auto_with_language(lang: crate::config::OcrLanguage) -> Result<Self, OcrError> {
         let dir = crate::download::default_model_dir();
         crate::download::ensure_models(&dir, lang)?;
@@ -91,9 +44,6 @@ impl OcrEngine {
         Self::with_config(config)
     }
 
-    /// Create an OCR engine with default configuration, pointing at a model directory.
-    ///
-    /// If required models are missing in `model_dir`, they will be automatically downloaded.
     pub fn new(model_dir: impl Into<std::path::PathBuf>) -> Result<Self, OcrError> {
         let dir = model_dir.into();
         let _ = crate::download::ensure_models(&dir, crate::config::OcrLanguage::Indonesian);
@@ -101,9 +51,6 @@ impl OcrEngine {
         Self::with_config(config)
     }
 
-    /// Create an OCR engine with a specific language preset.
-    ///
-    /// If required models are missing in `model_dir`, they will be automatically downloaded.
     pub fn with_language(
         model_dir: impl Into<std::path::PathBuf>,
         lang: crate::config::OcrLanguage,
@@ -114,9 +61,7 @@ impl OcrEngine {
         Self::with_config(config)
     }
 
-    /// Create an OCR engine with custom configuration.
     pub fn with_config(config: OcrConfig) -> Result<Self, OcrError> {
-        // Auto-download missing models if possible
         if !config.detection_model_path.exists() {
             if let Some(parent) = config.detection_model_path.parent() {
                 let _ = crate::download::ensure_models(parent, config.language);
@@ -124,7 +69,6 @@ impl OcrEngine {
         }
 
         let config = Arc::new(config);
-
         let detector = Arc::new(TextDetector::new(&config)?);
         let recognizer = Arc::new(TextRecognizer::new(&config)?);
 
@@ -132,7 +76,7 @@ impl OcrEngine {
         let pdf_processor = match PdfProcessor::new(Arc::clone(&config)) {
             Ok(p) => Some(Arc::new(p)),
             Err(e) => {
-                tracing::warn!("PDF processor init failed (PDF OCR disabled): {}", e);
+                tracing::warn!("PDF processor initialization failed: {}", e);
                 None
             }
         };
@@ -146,94 +90,165 @@ impl OcrEngine {
         })
     }
 
-    /// OCR a `DynamicImage` directly.
-    ///
-    /// This is the core method. All other `recognize_*` methods eventually call this.
-    ///
-    /// Applies the full optimized pipeline:
-    /// 1. **A4**: Adaptive enhancement (if enabled and image quality is low)
-    /// 2. **S1/A2**: SIMD detection preprocessing with bilinear interpolation
-    /// 3. **A5/S6**: Detection + NMS
-    /// 4. **S2/A3**: Batch recognition with proportional padding
-    /// 5. **A6**: Reading order sort + text reconstruction
-    pub fn recognize_image(&self, img: &DynamicImage) -> Result<RecognitionResult, OcrError> {
-        let (w, h) = img.dimensions();
-        debug!("OCR on image ({}x{})...", w, h);
-
-        // A4: Adaptive image enhancement
-        let processed_img = if self.config.enhancement_enabled {
-            enhance_if_needed(img, self.config.enhancement_variance_threshold)
+    pub fn recognize(&self, input: &str) -> Result<OcrResult, OcrError> {
+        let trimmed = input.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            self.recognize_url(trimmed)
         } else {
-            img.clone()
-        };
-
-        // Detection (S1, A1, A2, A5, S6 — all baked in)
-        let regions = self.detector.detect(&processed_img)?;
-        debug!("Detected {} text regions (post-NMS)", regions.len());
-
-        if regions.is_empty() {
-            return Ok(RecognitionResult::default());
+            self.recognize_file(trimmed)
         }
+    }
 
-        // S2: Batch recognition (A3 proportional padding baked in)
-        let recognized_items = self
-            .recognizer
-            .recognize_regions_batch(&processed_img, &regions)?;
-        debug!("Recognized {} text items", recognized_items.len());
+    pub fn recognize_url(&self, url: &str) -> Result<OcrResult, OcrError> {
+        debug!("Fetching OCR image from URL: {}", url);
+        let resp = ureq::get(url)
+            .set("User-Agent", "alvio-ocr/0.1.1")
+            .timeout(std::time::Duration::from_secs(30))
+            .call()
+            .map_err(|e| OcrError::Network(format!("Failed to fetch '{}': {}", url, e)))?;
 
-        // A6: Reading order sort + text reconstruction
-        let sorted_items = sort_reading_order(recognized_items);
-        let text = reconstruct_text(&sorted_items);
+        let mut bytes = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(|e| OcrError::Network(format!("Failed to read body from '{}': {}", url, e)))?;
 
-        Ok(RecognitionResult {
-            text,
-            regions: sorted_items,
+        self.recognize_bytes(&bytes)
+    }
+
+    pub fn recognize_file(&self, path: impl AsRef<Path>) -> Result<OcrResult, OcrError> {
+        let path_ref = path.as_ref();
+        validate_file_path(path_ref)?;
+        let bytes = std::fs::read(path_ref)?;
+        self.recognize_bytes(&bytes)
+    }
+
+    pub fn recognize_files<P: AsRef<Path> + Sync>(&self, paths: &[P]) -> Result<BatchResult, OcrError> {
+        let start = Instant::now();
+        let items: Vec<BatchItem> = paths
+            .par_iter()
+            .map(|p| {
+                let path_str = p.as_ref().to_string_lossy().to_string();
+                let item_start = Instant::now();
+                match self.recognize_file(p) {
+                    Ok(result) => BatchItem {
+                        source: path_str,
+                        success: true,
+                        result: Some(result),
+                        error: None,
+                        duration_ms: item_start.elapsed().as_millis() as u64,
+                    },
+                    Err(err) => BatchItem {
+                        source: path_str,
+                        success: false,
+                        result: None,
+                        error: Some(err.to_string()),
+                        duration_ms: item_start.elapsed().as_millis() as u64,
+                    },
+                }
+            })
+            .collect();
+
+        let succeeded = items.iter().filter(|i| i.success).count();
+        let failed = items.len() - succeeded;
+
+        Ok(BatchResult {
+            items,
+            total: paths.len(),
+            succeeded,
+            failed,
+            total_duration_ms: start.elapsed().as_millis() as u64,
         })
     }
 
-    /// OCR from raw file bytes. Auto-detects format (image or PDF).
-    ///
-    /// For PDF files, this will only work if the `pdf` feature is enabled.
-    /// If you specifically want PDF results with page-level data, use [`recognize_pdf`].
-    pub fn recognize_bytes(&self, bytes: &[u8]) -> Result<RecognitionResult, OcrError> {
+    pub fn recognize_urls(&self, urls: &[&str]) -> Result<BatchResult, OcrError> {
+        let start = Instant::now();
+        let items: Vec<BatchItem> = urls
+            .par_iter()
+            .map(|url| {
+                let item_start = Instant::now();
+                match self.recognize_url(url) {
+                    Ok(result) => BatchItem {
+                        source: url.to_string(),
+                        success: true,
+                        result: Some(result),
+                        error: None,
+                        duration_ms: item_start.elapsed().as_millis() as u64,
+                    },
+                    Err(err) => BatchItem {
+                        source: url.to_string(),
+                        success: false,
+                        result: None,
+                        error: Some(err.to_string()),
+                        duration_ms: item_start.elapsed().as_millis() as u64,
+                    },
+                }
+            })
+            .collect();
+
+        let succeeded = items.iter().filter(|i| i.success).count();
+        let failed = items.len() - succeeded;
+
+        Ok(BatchResult {
+            items,
+            total: urls.len(),
+            succeeded,
+            failed,
+            total_duration_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+
+    pub fn recognize_bytes(&self, bytes: &[u8]) -> Result<OcrResult, OcrError> {
         let format = detect_format(bytes)?;
 
         match format {
             DocumentFormat::Pdf => {
                 #[cfg(feature = "pdf")]
                 {
+                    let start = Instant::now();
                     let pages = self.recognize_pdf(bytes)?;
-                    let combined_text = pages
-                        .iter()
-                        .map(|p| p.text.as_str())
-                        .filter(|t| !t.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
+                    let mut combined_lines = Vec::new();
+                    let mut combined_regions = Vec::new();
 
-                    let all_regions: Vec<_> = pages
-                        .into_iter()
-                        .flat_map(|p| p.regions)
-                        .collect();
+                    for page in &pages {
+                        combined_lines.extend(page.lines.clone());
+                        combined_regions.extend(page.regions.clone());
+                    }
 
-                    Ok(RecognitionResult {
-                        text: combined_text,
-                        regions: all_regions,
+                    let full_text = reconstruct_text_from_lines(&combined_lines);
+                    let conf = if combined_regions.is_empty() {
+                        0.0
+                    } else {
+                        combined_regions.iter().map(|r| r.confidence).sum::<f32>()
+                            / combined_regions.len() as f32
+                    };
+
+                    let first_dims = pages.first().map(|p| p.dimensions).unwrap_or((0, 0));
+
+                    Ok(OcrResult {
+                        text: full_text,
+                        confidence: conf,
+                        lines: combined_lines,
+                        regions: combined_regions,
+                        dimensions: first_dims,
+                        format: DocumentFormat::Pdf,
+                        duration_ms: start.elapsed().as_millis() as u64,
                     })
                 }
 
                 #[cfg(not(feature = "pdf"))]
-                Err(OcrError::UnsupportedFormat(
-                    "PDF support requires the 'pdf' feature. Add `features = [\"pdf\"]` to your Cargo.toml.".to_string(),
-                ))
+                Err(OcrError::UnsupportedFormat {
+                    detected: "pdf".to_string(),
+                    supported: "jpeg, png, webp, bmp, tiff (PDF requires `features = [\"pdf\"]`)".to_string(),
+                })
             }
-            DocumentFormat::Image(_) => {
+            _ => {
                 let reader = ImageReader::new(Cursor::new(bytes))
                     .with_guessed_format()
-                    .map_err(|e| OcrError::InvalidImage(format!("Parse format: {}", e)))?;
+                    .map_err(|e| OcrError::InvalidImage(format!("Parse image format: {}", e)))?;
 
                 let img = reader
                     .decode()
-                    .map_err(|e| OcrError::InvalidImage(format!("Decode: {}", e)))?;
+                    .map_err(|e| OcrError::InvalidImage(format!("Decode image: {}", e)))?;
 
                 let (w, h) = img.dimensions();
                 if w > self.config.max_image_width || h > self.config.max_image_height {
@@ -243,31 +258,65 @@ impl OcrEngine {
                     )));
                 }
 
-                self.recognize_image(&img)
+                let mut res = self.recognize_image(&img)?;
+                res.format = format;
+                Ok(res)
             }
         }
     }
 
-    /// OCR from a file path. Auto-detects format.
-    pub fn recognize_file(&self, path: impl AsRef<Path>) -> Result<RecognitionResult, OcrError> {
-        let bytes = std::fs::read(path.as_ref())?;
-        self.recognize_bytes(&bytes)
+    pub fn recognize_image(&self, img: &DynamicImage) -> Result<OcrResult, OcrError> {
+        let start = Instant::now();
+        let (w, h) = img.dimensions();
+        debug!("OCR on image ({}x{})...", w, h);
+
+        let processed_img = if self.config.enhancement_enabled {
+            enhance_if_needed(img, self.config.enhancement_variance_threshold)
+        } else {
+            img.clone()
+        };
+
+        let regions = self.detector.detect(&processed_img)?;
+        debug!("Detected {} text regions", regions.len());
+
+        if regions.is_empty() {
+            return Ok(OcrResult {
+                text: String::new(),
+                confidence: 0.0,
+                lines: Vec::new(),
+                regions: Vec::new(),
+                dimensions: (w, h),
+                format: DocumentFormat::Unknown,
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+
+        let recognized_items = self
+            .recognizer
+            .recognize_regions_batch(&processed_img, &regions)?;
+        debug!("Recognized {} text items", recognized_items.len());
+
+        let sorted_items = sort_reading_order(recognized_items);
+        let (flat_regions, lines) = group_into_lines(sorted_items);
+        let text = reconstruct_text_from_lines(&lines);
+
+        let conf = if flat_regions.is_empty() {
+            0.0
+        } else {
+            flat_regions.iter().map(|r| r.confidence).sum::<f32>() / flat_regions.len() as f32
+        };
+
+        Ok(OcrResult {
+            text,
+            confidence: conf,
+            lines,
+            regions: flat_regions,
+            dimensions: (w, h),
+            format: DocumentFormat::Unknown,
+            duration_ms: start.elapsed().as_millis() as u64,
+        })
     }
 
-    /// OCR a PDF document, returning per-page results.
-    ///
-    /// Uses parallel page processing (S5) via rayon for multi-page PDFs.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use alvio_ocr::OcrEngine;
-    /// let engine = OcrEngine::new("./models/ocr").unwrap();
-    /// let pdf_bytes = std::fs::read("document.pdf").unwrap();
-    /// let pages = engine.recognize_pdf(&pdf_bytes).unwrap();
-    /// for page in &pages {
-    ///     println!("Page {}: {}", page.page_number, page.text);
-    /// }
-    /// ```
     #[cfg(feature = "pdf")]
     pub fn recognize_pdf(&self, pdf_bytes: &[u8]) -> Result<Vec<PageResult>, OcrError> {
         let pdf_processor = self.pdf_processor.as_ref().ok_or_else(|| {
@@ -278,8 +327,8 @@ impl OcrEngine {
         let recognizer = Arc::clone(&self.recognizer);
         let config = Arc::clone(&self.config);
 
-        pdf_processor.process_pdf(pdf_bytes, |img| {
-            // Run the full OCR pipeline on a page image
+        pdf_processor.process_pdf(pdf_bytes, move |img| {
+            let (w, h) = img.dimensions();
             let processed_img = if config.enhancement_enabled {
                 enhance_if_needed(img, config.enhancement_variance_threshold)
             } else {
@@ -288,14 +337,48 @@ impl OcrEngine {
 
             let regions = detector.detect(&processed_img)?;
             if regions.is_empty() {
-                return Ok((String::new(), Vec::new()));
+                return Ok((String::new(), 0.0, Vec::new(), Vec::new(), (w, h)));
             }
 
             let recognized = recognizer.recognize_regions_batch(&processed_img, &regions)?;
             let sorted = sort_reading_order(recognized);
-            let text = reconstruct_text(&sorted);
+            let (flat_regions, lines) = group_into_lines(sorted);
+            let text = reconstruct_text_from_lines(&lines);
 
-            Ok((text, sorted))
+            let conf = if flat_regions.is_empty() {
+                0.0
+            } else {
+                flat_regions.iter().map(|r| r.confidence).sum::<f32>() / flat_regions.len() as f32
+            };
+
+            Ok((text, conf, flat_regions, lines, (w, h)))
+        })
+    }
+
+    #[cfg(feature = "pdf")]
+    pub fn recognize_pdf_document(&self, pdf_bytes: &[u8]) -> Result<PdfResult, OcrError> {
+        let start = Instant::now();
+        let pages = self.recognize_pdf(pdf_bytes)?;
+        let total_pages = pages.len();
+        let text = pages
+            .iter()
+            .map(|p| p.text.as_str())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let conf = if pages.is_empty() {
+            0.0
+        } else {
+            pages.iter().map(|p| p.confidence).sum::<f32>() / pages.len() as f32
+        };
+
+        Ok(PdfResult {
+            pages,
+            total_pages,
+            text,
+            confidence: conf,
+            duration_ms: start.elapsed().as_millis() as u64,
         })
     }
 }

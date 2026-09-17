@@ -16,21 +16,38 @@ use std::path::PathBuf;
 ///   Uses the universal PP-OCRv4 model (`ch_PP-OCRv4_rec_infer.onnx` + `ppocr_keys_v1.txt`).
 ///   Recognizes 6,625+ characters including Chinese (Hanzi), Japanese (Kanji), Latin alphabet
 ///   (Indonesian/English), numbers, and mathematical symbols.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageInfo {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub model_name: &'static str,
+    pub character_count: usize,
+    pub description: &'static str,
+    pub auto_download: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OcrLanguage {
-    /// Indonesian (Latin alphabet, fast, default).
     #[default]
     Indonesian,
-    /// English (alias for Indonesian/Latin alphabet).
     English,
-    /// Multilingual / Universal (6,625+ characters, Latin + Chinese + Kanji + symbols).
     Multilingual,
-    /// Chinese (Traditional & Simplified, 6,625+ characters).
     Chinese,
 }
 
 impl OcrLanguage {
-    /// Returns the recommended recognition ONNX model filename for this language preset.
+    pub fn all() -> &'static [OcrLanguage] {
+        &[
+            Self::Indonesian,
+            Self::English,
+            Self::Multilingual,
+            Self::Chinese,
+        ]
+    }
+
     pub fn model_filename(&self) -> &'static str {
         match self {
             Self::Indonesian | Self::English => "en_PP-OCRv4_rec_infer.onnx",
@@ -38,7 +55,6 @@ impl OcrLanguage {
         }
     }
 
-    /// Returns the character dictionary filename for this language preset.
     pub fn dict_filename(&self) -> &'static str {
         match self {
             Self::Indonesian | Self::English => "en_dict.txt",
@@ -46,7 +62,6 @@ impl OcrLanguage {
         }
     }
 
-    /// Human-readable display name.
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Indonesian => "Indonesian (Latin)",
@@ -56,7 +71,43 @@ impl OcrLanguage {
         }
     }
 
-    /// Parse a language code string (e.g. "id", "en", "multi", "ch", "zh").
+    pub fn info(&self) -> LanguageInfo {
+        match self {
+            Self::Indonesian => LanguageInfo {
+                id: "id",
+                name: "Indonesian",
+                model_name: "en_PP-OCRv4_rec_infer.onnx",
+                character_count: 95,
+                description: "Latin script, letters A-Z, numbers, and standard symbols. Fast inference, ideal for Indonesian ID cards (KTP, SIM, NPWP), receipts, invoices, and standard documents.",
+                auto_download: true,
+            },
+            Self::English => LanguageInfo {
+                id: "en",
+                name: "English",
+                model_name: "en_PP-OCRv4_rec_infer.onnx",
+                character_count: 95,
+                description: "Latin script, letters A-Z, numbers, and standard punctuation. Fast inference optimized for Latin alphabets.",
+                auto_download: true,
+            },
+            Self::Multilingual => LanguageInfo {
+                id: "multi",
+                name: "Multilingual / Universal",
+                model_name: "ch_PP-OCRv4_rec_infer.onnx",
+                character_count: 6625,
+                description: "Supports 6,625+ characters including Latin (Indonesian, English, European languages), CJK (Chinese Hanzi, Japanese Kanji), numbers, and mathematical symbols.",
+                auto_download: true,
+            },
+            Self::Chinese => LanguageInfo {
+                id: "zh",
+                name: "Chinese (Simplified & Traditional)",
+                model_name: "ch_PP-OCRv4_rec_infer.onnx",
+                character_count: 6625,
+                description: "Simplified and Traditional Chinese characters along with Latin alphabet and digits.",
+                auto_download: true,
+            },
+        }
+    }
+
     pub fn from_code(code: &str) -> Option<Self> {
         match code.trim().to_lowercase().as_str() {
             "id" | "ind" | "indonesia" | "indonesian" => Some(Self::Indonesian),
@@ -66,6 +117,10 @@ impl OcrLanguage {
             _ => None,
         }
     }
+}
+
+pub fn supported_languages() -> Vec<LanguageInfo> {
+    OcrLanguage::all().iter().map(|lang| lang.info()).collect()
 }
 
 /// Configuration for the OCR engine.

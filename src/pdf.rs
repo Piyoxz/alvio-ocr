@@ -8,7 +8,7 @@ use crate::{
     config::OcrConfig,
     deduplication::deduplicate_ocr_items,
     error::OcrError,
-    types::{OcrText, PageResult, TextSource},
+    types::{OcrText, PageResult, TextLine, TextSource},
 };
 use image::DynamicImage;
 use parking_lot::Mutex;
@@ -99,12 +99,19 @@ impl PdfProcessor {
         // Auto-download Pdfium if missing
         info!("Pdfium not found on system. Automatically downloading prebuilt Pdfium binary...");
         let libs_dir = crate::download::default_libs_dir();
-        let lib_path = crate::download::ensure_pdfium(&libs_dir)?;
-        info!("Binding to automatically downloaded Pdfium at: {:?}", lib_path);
-        let bindings = Pdfium::bind_to_library(&lib_path).map_err(|e| {
-            OcrError::InvalidPdf(format!("Failed to bind downloaded Pdfium at {:?}: {}", lib_path, e))
-        })?;
-        Ok(Pdfium::new(bindings))
+        crate::download::ensure_pdfium(&libs_dir)?;
+
+        let downloaded_path = Pdfium::pdfium_platform_library_name_at_path(&libs_dir);
+        if downloaded_path.exists() {
+            let bindings = Pdfium::bind_to_library(&downloaded_path).map_err(|e| {
+                OcrError::InvalidPdf(format!("Failed to bind downloaded Pdfium: {}", e))
+            })?;
+            return Ok(Pdfium::new(bindings));
+        }
+
+        Err(OcrError::InvalidPdf(
+            "Pdfium library not found. Please place pdfium.dll / libpdfium.so in './libs' or set PDFIUM_PATH.".to_string(),
+        ))
     }
 
     /// Process a PDF document with parallel page OCR.
@@ -118,7 +125,7 @@ impl PdfProcessor {
         ocr_fn: F,
     ) -> Result<Vec<PageResult>, OcrError>
     where
-        F: Fn(&DynamicImage) -> Result<(String, Vec<OcrText>), OcrError> + Send + Sync,
+        F: Fn(&DynamicImage) -> Result<(String, f32, Vec<OcrText>, Vec<TextLine>, (u32, u32)), OcrError> + Send + Sync,
     {
         // === PHASE 1: Sequential extraction via pdfium ===
         let extracted_pages = {
@@ -212,26 +219,25 @@ impl PdfProcessor {
                     let page_num = page.page_number;
 
                     if page.has_usable_text && page.candidate_images.is_empty() {
-                        // Pure native text — no OCR needed
-                        debug!("Page {} → native text (no OCR)", page_num);
+                        debug!("Page {} native text extraction", page_num);
                         Ok(PageResult {
                             page_number: page_num,
                             source: TextSource::NativeText,
                             text: page.native_text,
+                            confidence: 1.0,
                             regions: Vec::new(),
+                            lines: Vec::new(),
+                            dimensions: (1024, 1448),
                         })
                     } else if page.has_usable_text && !page.candidate_images.is_empty() {
-                        // Mixed: native text + embedded images
-                        debug!(
-                            "Page {} → mixed ({} embedded images)",
-                            page_num,
-                            page.candidate_images.len()
-                        );
+                        debug!("Page {} mixed content", page_num);
 
                         let mut embedded_regions = Vec::new();
+                        let mut embedded_lines = Vec::new();
                         for img in &page.candidate_images {
-                            if let Ok((_, regions)) = ocr_fn(img) {
+                            if let Ok((_, _, regions, lines, _)) = ocr_fn(img) {
                                 embedded_regions.extend(regions);
+                                embedded_lines.extend(lines);
                             }
                         }
 
@@ -243,61 +249,82 @@ impl PdfProcessor {
                             combined.push('\n');
                             combined.push_str(&appended_ocr_text);
 
+                            let conf = unique_ocr_items.iter().map(|r| r.confidence).sum::<f32>()
+                                / unique_ocr_items.len() as f32;
+
                             Ok(PageResult {
                                 page_number: page_num,
                                 source: TextSource::Mixed,
                                 text: combined,
+                                confidence: conf,
                                 regions: unique_ocr_items,
+                                lines: embedded_lines,
+                                dimensions: (1024, 1448),
                             })
                         } else {
                             Ok(PageResult {
                                 page_number: page_num,
                                 source: TextSource::NativeText,
                                 text: page.native_text,
+                                confidence: 1.0,
                                 regions: Vec::new(),
+                                lines: Vec::new(),
+                                dimensions: (1024, 1448),
                             })
                         }
                     } else if let Some(rendered) = &page.rendered_image {
-                        // Full OCR on rendered page
-                        debug!("Page {} → full OCR on rendered image", page_num);
-                        let (text, regions) = ocr_fn(rendered)?;
+                        debug!("Page {} rendered image OCR", page_num);
+                        let (text, conf, regions, lines, dims) = ocr_fn(rendered)?;
                         Ok(PageResult {
                             page_number: page_num,
                             source: TextSource::Ocr,
                             text,
+                            confidence: conf,
                             regions,
+                            lines,
+                            dimensions: dims,
                         })
                     } else if !page.candidate_images.is_empty() {
-                        // No native text but has embedded images
-                        debug!(
-                            "Page {} → OCR on {} embedded images",
-                            page_num,
-                            page.candidate_images.len()
-                        );
+                        debug!("Page {} embedded images OCR", page_num);
                         let mut all_text = String::new();
                         let mut all_regions = Vec::new();
+                        let mut all_lines = Vec::new();
                         for img in &page.candidate_images {
-                            if let Ok((text, regions)) = ocr_fn(img) {
+                            if let Ok((text, _, regions, lines, _)) = ocr_fn(img) {
                                 if !all_text.is_empty() && !text.is_empty() {
                                     all_text.push('\n');
                                 }
                                 all_text.push_str(&text);
                                 all_regions.extend(regions);
+                                all_lines.extend(lines);
                             }
                         }
+
+                        let conf = if all_regions.is_empty() {
+                            0.0
+                        } else {
+                            all_regions.iter().map(|r| r.confidence).sum::<f32>()
+                                / all_regions.len() as f32
+                        };
+
                         Ok(PageResult {
                             page_number: page_num,
                             source: TextSource::Ocr,
                             text: all_text,
+                            confidence: conf,
                             regions: all_regions,
+                            lines: all_lines,
+                            dimensions: (1024, 1448),
                         })
                     } else {
-                        // Empty page
                         Ok(PageResult {
                             page_number: page_num,
                             source: TextSource::NativeText,
                             text: String::new(),
+                            confidence: 1.0,
                             regions: Vec::new(),
+                            lines: Vec::new(),
+                            dimensions: (1024, 1448),
                         })
                     }
                 })

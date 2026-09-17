@@ -1,30 +1,29 @@
-//! Document format detection via magic bytes.
+use crate::{error::OcrError, types::DocumentFormat};
+use std::path::Path;
 
-use crate::error::OcrError;
+pub const SUPPORTED_FORMATS: &[&str] = &[
+    "jpeg", "jpg", "png", "webp", "bmp", "tiff", "tif", "pdf",
+];
 
-/// Supported image types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageType {
-    Jpeg,
-    Png,
-    Webp,
-    Bmp,
-    Tiff,
+pub fn supported_formats() -> &'static [&'static str] {
+    SUPPORTED_FORMATS
 }
 
-/// Detected document format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocumentFormat {
-    Pdf,
-    Image(ImageType),
+pub fn supported_formats_string() -> String {
+    SUPPORTED_FORMATS.join(", ")
 }
 
-/// Detect document format from file header magic bytes.
+pub fn is_supported_extension(ext: &str) -> bool {
+    let clean = ext.trim_start_matches('.').to_lowercase();
+    SUPPORTED_FORMATS.contains(&clean.as_str())
+}
+
 pub fn detect_format(bytes: &[u8]) -> Result<DocumentFormat, OcrError> {
     if bytes.len() < 4 {
-        return Err(OcrError::UnsupportedFormat(
-            "File too small to inspect signature".to_string(),
-        ));
+        return Err(OcrError::UnsupportedFormat {
+            detected: "empty_or_too_small".to_string(),
+            supported: supported_formats_string(),
+        });
     }
 
     if bytes.starts_with(b"%PDF-") || (bytes.len() >= 4 && &bytes[0..4] == b"%PDF") {
@@ -32,28 +31,47 @@ pub fn detect_format(bytes: &[u8]) -> Result<DocumentFormat, OcrError> {
     }
 
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        return Ok(DocumentFormat::Image(ImageType::Png));
+        return Ok(DocumentFormat::Png);
     }
 
     if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return Ok(DocumentFormat::Image(ImageType::Jpeg));
+        return Ok(DocumentFormat::Jpeg);
     }
 
     if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return Ok(DocumentFormat::Image(ImageType::Webp));
+        return Ok(DocumentFormat::WebP);
     }
 
     if bytes.starts_with(b"BM") {
-        return Ok(DocumentFormat::Image(ImageType::Bmp));
+        return Ok(DocumentFormat::Bmp);
     }
 
     if bytes.starts_with(&[0x49, 0x49, 0x2A, 0x00])
         || bytes.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])
     {
-        return Ok(DocumentFormat::Image(ImageType::Tiff));
+        return Ok(DocumentFormat::Tiff);
     }
 
-    Err(OcrError::UnsupportedFormat(
-        "Unsupported format. Expected PDF, JPEG, PNG, WebP, BMP, or TIFF.".to_string(),
-    ))
+    let detected = if bytes.len() >= 4 {
+        format!("magic_bytes({:02X}{:02X}{:02X}{:02X})", bytes[0], bytes[1], bytes[2], bytes[3])
+    } else {
+        "unknown".to_string()
+    };
+
+    Err(OcrError::UnsupportedFormat {
+        detected,
+        supported: supported_formats_string(),
+    })
+}
+
+pub fn validate_file_path(path: &Path) -> Result<(), OcrError> {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if !is_supported_extension(ext) {
+            return Err(OcrError::UnsupportedFormat {
+                detected: ext.to_lowercase(),
+                supported: supported_formats_string(),
+            });
+        }
+    }
+    Ok(())
 }

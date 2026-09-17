@@ -139,11 +139,7 @@ pub fn enhance_if_needed(img: &DynamicImage, variance_threshold: f32) -> Dynamic
     );
 
     let rgb = img.to_rgb8();
-
-    // Step 1: Auto-contrast stretching
     let contrasted = auto_contrast(&rgb);
-
-    // Step 2: Unsharp masking for text sharpening
     let sharpened = unsharp_mask(&contrasted, 0.8);
 
     DynamicImage::ImageRgb8(sharpened)

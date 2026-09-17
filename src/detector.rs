@@ -1,10 +1,3 @@
-//! Text detection using DBNet v4 ONNX model.
-//!
-//! Optimizations:
-//! - **S3**: Parallel execution mode + adaptive threading
-//! - **A1**: Higher default resolution (960) for better small text detection
-//! - **A5/S6**: NMS applied post-detection to remove overlapping regions
-
 use crate::{
     config::OcrConfig,
     error::OcrError,
@@ -45,7 +38,6 @@ impl TextDetector {
             model_path
         );
 
-        // S3: Adaptive threading + parallel execution
         let (intra, inter) = config.resolve_threads();
 
         let session = Session::builder()
@@ -223,7 +215,6 @@ impl TextDetector {
             regions.push(TextRegion::new(polygon, confidence));
         }
 
-        // A5/S6: Apply NMS to remove overlapping regions
         let regions = apply_nms(regions, self.nms_iou_threshold);
 
         Ok(regions)

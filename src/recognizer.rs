@@ -1,10 +1,3 @@
-//! Text recognition using SVTR v4 ONNX model.
-//!
-//! Optimizations:
-//! - **S2**: Batch inference — all text regions recognized in a single ONNX call
-//! - **S3**: Parallel execution mode + adaptive threading
-//! - **A3**: Proportional padding based on region height
-
 use crate::{
     config::OcrConfig,
     error::OcrError,
@@ -58,7 +51,6 @@ impl TextRecognizer {
         }
         info!("Loaded {} characters into dictionary.", dictionary.len());
 
-        // S3: Adaptive threading + parallel execution
         let (intra, inter) = config.resolve_threads();
 
         info!("Loading SVTR recognition model from {:?} ...", model_path);
@@ -136,11 +128,7 @@ impl TextRecognizer {
             return Ok(None);
         }
 
-        Ok(Some(OcrText {
-            text,
-            confidence,
-            region: region.clone(),
-        }))
+        Ok(Some(OcrText::new(text, confidence, region.clone())))
     }
 
     /// **S2: Batch recognition** — recognize all regions in a single ONNX inference call.
@@ -182,7 +170,6 @@ impl TextRecognizer {
             return Ok(results);
         }
 
-        // S2: Batch preprocess — all crops resized, padded, and stacked into one tensor
         let (batch_tensor, _target_widths) = preprocess_recognition_batch(&crops);
 
         let input_tensor = Tensor::from_array(batch_tensor)
@@ -235,24 +222,22 @@ impl TextRecognizer {
             let (text, confidence) = self.decode_ctc(item_slice, seq_len, num_classes);
 
             if !text.is_empty() && confidence >= self.rec_threshold {
-                results.push(OcrText {
+                results.push(OcrText::new(
                     text,
                     confidence,
-                    region: regions[valid_indices[b]].clone(),
-                });
+                    regions[valid_indices[b]].clone(),
+                ));
             }
         }
 
         Ok(results)
     }
 
-    /// Crop a region from the image with proportional padding (A3).
     fn crop_region(&self, img: &DynamicImage, region: &TextRegion) -> Option<RgbImage> {
         let (min_x, min_y, max_x, max_y) = region.aabb();
         let (img_w, img_h) = (img.width() as f32, img.height() as f32);
         let region_h = (max_y - min_y).max(1.0);
 
-        // A3: Proportional padding based on region height
         let pad_x = (region_h * 0.15).max(3.0);
         let pad_y = (region_h * 0.1).max(2.0);
 

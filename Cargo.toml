@@ -1,6 +1,6 @@
 [package]
 name = "alvio-ocr"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Alvio"]
 description = "High-performance OCR library powered by ONNX Runtime (PP-OCRv4). Optimized for speed (SIMD, batch inference, parallel processing) and accuracy (adaptive enhancement, NMS, proportional padding)."
@@ -32,6 +32,9 @@ fast_image_resize = "6"
 # Parallelism
 rayon = "1.10"
 num_cpus = "1.16"
+
+# Network
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
 
 # Core
 thiserror = "2.0"
