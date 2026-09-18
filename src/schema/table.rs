@@ -22,6 +22,26 @@ impl TableData {
             .collect()
     }
 
+    pub fn to_csv(&self) -> String {
+        let mut out = String::new();
+        for row in self.to_matrix() {
+            let row_str = row
+                .iter()
+                .map(|cell| {
+                    if cell.contains(',') || cell.contains('"') || cell.contains('\n') {
+                        format!("\"{}\"", cell.replace('"', "\"\""))
+                    } else {
+                        cell.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&row_str);
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn to_markdown(&self) -> String {
         if self.rows.is_empty() {
             return String::new();

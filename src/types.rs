@@ -273,6 +273,18 @@ impl OcrResult {
         crate::schema::ktp::extract_ktp_from_lines(&self.lines)
     }
 
+    pub fn to_npwp(&self) -> crate::schema::NpwpData {
+        crate::schema::npwp::extract_npwp_from_lines(&self.lines)
+    }
+
+    pub fn to_sim(&self) -> crate::schema::SimData {
+        crate::schema::sim::extract_sim_from_lines(&self.lines)
+    }
+
+    pub fn to_entities(&self) -> crate::schema::ExtractedEntities {
+        crate::schema::entities::extract_entities_from_lines(&self.lines)
+    }
+
     pub fn to_receipt(&self) -> crate::schema::ReceiptData {
         crate::schema::receipt::extract_receipt_from_lines(&self.lines)
     }
@@ -283,6 +295,58 @@ impl OcrResult {
 
     pub fn to_key_values(&self) -> Vec<crate::schema::KeyValuePair> {
         crate::schema::key_value::extract_key_values(&self.lines)
+    }
+
+    pub fn to_searchable_pdf(&self, image: &image::DynamicImage) -> Result<Vec<u8>, crate::error::OcrError> {
+        crate::searchable_pdf::create_searchable_pdf(image, &self.lines)
+    }
+
+    pub fn to_annotated_image(&self, image: &image::DynamicImage) -> image::DynamicImage {
+        crate::visualization::annotate_image(image, self)
+    }
+
+    pub fn to_hocr(&self) -> String {
+        let (w, h) = self.dimensions;
+        let mut out = String::new();
+        out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        out.push_str("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n");
+        out.push_str("<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n<head>\n  <title>OCR Output</title>\n  <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\" />\n  <meta name='ocr-system' content='alvio-ocr' />\n</head>\n<body>\n");
+        out.push_str(&format!("  <div class='ocr_page' id='page_1' title='bbox 0 0 {} {}'>\n", w, h));
+        out.push_str("    <div class='ocr_carea' id='block_1_1'>\n");
+
+        for line in &self.lines {
+            let bbox = &line.bbox;
+            let conf_pct = (line.confidence * 100.0).round() as u32;
+            out.push_str(&format!(
+                "      <p class='ocr_par' id='par_{}' title='bbox {:.0} {:.0} {:.0} {:.0}'>\n",
+                line.line_number, bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y
+            ));
+            out.push_str(&format!(
+                "        <span class='ocr_line' id='line_{}' title='bbox {:.0} {:.0} {:.0} {:.0}; x_wconf {}'>\n",
+                line.line_number, bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y, conf_pct
+            ));
+
+            for (w_idx, word) in line.words.iter().enumerate() {
+                let wb = word.region.bbox();
+                let w_conf = (word.confidence * 100.0).round() as u32;
+                let escaped_word = word.text
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+                    .replace('"', "&quot;");
+                out.push_str(&format!(
+                    "          <span class='ocrx_word' id='word_{}_{}' title='bbox {:.0} {:.0} {:.0} {:.0}; x_wconf {}'>{}</span>\n",
+                    line.line_number, w_idx + 1, wb.min_x, wb.min_y, wb.max_x, wb.max_y, w_conf,
+                    escaped_word
+                ));
+            }
+
+            out.push_str("        </span>\n");
+            out.push_str("      </p>\n");
+        }
+
+        out.push_str("    </div>\n  </div>\n</body>\n</html>\n");
+        out
     }
 
     pub fn search(&self, query: &str) -> Vec<&OcrText> {

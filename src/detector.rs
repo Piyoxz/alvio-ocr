@@ -187,22 +187,83 @@ impl TextDetector {
 
             let distance = (area * self.unclip_ratio) / perimeter;
 
-            let exp_min_x = (min_x as f32 - distance).max(0.0);
-            let exp_min_y = (min_y as f32 - distance).max(0.0);
-            let exp_max_x = (max_x as f32 + distance).min(target_w as f32 - 1.0);
-            let exp_max_y = (max_y as f32 + distance).min(target_h as f32 - 1.0);
+            let cx = pts.iter().map(|p| p.x as f32).sum::<f32>() / n as f32;
+            let cy = pts.iter().map(|p| p.y as f32).sum::<f32>() / n as f32;
 
-            let orig_min_x = (exp_min_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);
-            let orig_min_y = (exp_min_y * preprocessed.scale_y).clamp(0.0, orig_h as f32);
-            let orig_max_x = (exp_max_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);
-            let orig_max_y = (exp_max_y * preprocessed.scale_y).clamp(0.0, orig_h as f32);
+            let mut m20 = 0.0f32;
+            let mut m02 = 0.0f32;
+            let mut m11 = 0.0f32;
+            for p in pts {
+                let dx = p.x as f32 - cx;
+                let dy = p.y as f32 - cy;
+                m20 += dx * dx;
+                m02 += dy * dy;
+                m11 += dx * dy;
+            }
 
-            let polygon = vec![
-                Point::new(orig_min_x, orig_min_y),
-                Point::new(orig_max_x, orig_min_y),
-                Point::new(orig_max_x, orig_max_y),
-                Point::new(orig_min_x, orig_max_y),
-            ];
+            let angle = 0.5 * (2.0 * m11).atan2(m20 - m02);
+            let angle_deg = angle.to_degrees();
+
+            let polygon = if angle_deg.abs() >= 1.5 && angle_deg.abs() <= 45.0 {
+                let cos_a = angle.cos();
+                let sin_a = angle.sin();
+
+                let mut min_u = f32::MAX;
+                let mut max_u = f32::MIN;
+                let mut min_v = f32::MAX;
+                let mut max_v = f32::MIN;
+
+                for p in pts {
+                    let dx = p.x as f32 - cx;
+                    let dy = p.y as f32 - cy;
+                    let u = dx * cos_a + dy * sin_a;
+                    let v = -dx * sin_a + dy * cos_a;
+                    if u < min_u { min_u = u; }
+                    if u > max_u { max_u = u; }
+                    if v < min_v { min_v = v; }
+                    if v > max_v { max_v = v; }
+                }
+
+                let exp_min_u = min_u - distance;
+                let exp_max_u = max_u + distance;
+                let exp_min_v = min_v - distance;
+                let exp_max_v = max_v + distance;
+
+                let corners_uv = [
+                    (exp_min_u, exp_min_v),
+                    (exp_max_u, exp_min_v),
+                    (exp_max_u, exp_max_v),
+                    (exp_min_u, exp_max_v),
+                ];
+
+                corners_uv
+                    .iter()
+                    .map(|&(u, v)| {
+                        let tx = (cx + u * cos_a - v * sin_a).clamp(0.0, target_w as f32 - 1.0);
+                        let ty = (cy + u * sin_a + v * cos_a).clamp(0.0, target_h as f32 - 1.0);
+                        let ox = (tx * preprocessed.scale_x).clamp(0.0, orig_w as f32);
+                        let oy = (ty * preprocessed.scale_y).clamp(0.0, orig_h as f32);
+                        Point::new(ox, oy)
+                    })
+                    .collect()
+            } else {
+                let exp_min_x = (min_x as f32 - distance).max(0.0);
+                let exp_min_y = (min_y as f32 - distance).max(0.0);
+                let exp_max_x = (max_x as f32 + distance).min(target_w as f32 - 1.0);
+                let exp_max_y = (max_y as f32 + distance).min(target_h as f32 - 1.0);
+
+                let orig_min_x = (exp_min_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);
+                let orig_min_y = (exp_min_y * preprocessed.scale_y).clamp(0.0, orig_h as f32);
+                let orig_max_x = (exp_max_x * preprocessed.scale_x).clamp(0.0, orig_w as f32);
+                let orig_max_y = (exp_max_y * preprocessed.scale_y).clamp(0.0, orig_h as f32);
+
+                vec![
+                    Point::new(orig_min_x, orig_min_y),
+                    Point::new(orig_max_x, orig_min_y),
+                    Point::new(orig_max_x, orig_max_y),
+                    Point::new(orig_min_x, orig_max_y),
+                ]
+            };
 
             regions.push(TextRegion::new(polygon, confidence));
         }

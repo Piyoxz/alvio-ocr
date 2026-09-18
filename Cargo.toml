@@ -1,9 +1,9 @@
 [package]
 name = "alvio-ocr"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
 authors = ["Alvio"]
-description = "High-performance OCR and Document AI library powered by ONNX Runtime (PP-OCRv6). Feature-complete with orientation deskew, confidence 2nd-pass re-OCR, KTP/receipt/table schemas, and per-stage profiling."
+description = "High-performance OCR and Document AI library powered by ONNX Runtime (PP-OCRv6). Feature-complete with orientation deskew, confidence 2nd-pass re-OCR, KTP/receipt/table/NPWP/SIM schemas, searchable PDF, and per-stage profiling."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/piyoxz/alvio-ocr"
@@ -37,6 +37,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 parking_lot = "0.12"
 tracing = "0.1"
+sha2 = "0.10"
 
 pdfium-render = { version = "0.8", optional = true }
 
@@ -45,6 +46,10 @@ default = []
 pdf = ["dep:pdfium-render"]
 cuda = ["ort/cuda"]
 directml = ["ort/directml"]
+
+[[bin]]
+name = "alvio-ocr"
+path = "src/bin/alvio_ocr.rs"
 
 [[example]]
 name = "simple_ocr"

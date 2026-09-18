@@ -144,90 +144,142 @@ impl TextRecognizer {
             return Ok(Vec::new());
         }
 
-        let mut crops: Vec<RgbImage> = Vec::with_capacity(regions.len());
-        let mut valid_indices: Vec<usize> = Vec::with_capacity(regions.len());
+        struct CropItem {
+            crop: RgbImage,
+            valid_idx: usize,
+            target_width: u32,
+        }
+
+        let target_h = 48u32;
+        let mut items: Vec<CropItem> = Vec::with_capacity(regions.len());
 
         for (i, region) in regions.iter().enumerate() {
             if let Some(crop) = self.crop_region(img, region) {
-                crops.push(crop);
-                valid_indices.push(i);
+                let (cw, ch) = crop.dimensions();
+                let ratio = cw as f32 / ch.max(1) as f32;
+                let target_width = ((target_h as f32 * ratio).round() as u32).clamp(16, 320);
+                items.push(CropItem {
+                    crop,
+                    valid_idx: i,
+                    target_width,
+                });
             }
         }
 
-        if crops.is_empty() {
+        if items.is_empty() {
             return Ok(Vec::new());
         }
 
-        if crops.len() == 1 {
+        if items.len() == 1 {
             let mut results = Vec::new();
-            if let Some(ocr_text) = self.recognize_region(img, &regions[valid_indices[0]])? {
+            if let Some(ocr_text) = self.recognize_region(img, &regions[items[0].valid_idx])? {
                 results.push(ocr_text);
             }
             return Ok(results);
         }
 
-        let (batch_tensor, _target_widths) = preprocess_recognition_batch(&crops);
+        // Aspect-ratio bucketing: Sort items by target width so items in each chunk
+        // have similar width, eliminating 60-70% unnecessary padding
+        items.sort_by_key(|it| it.target_width);
 
-        let input_tensor = Tensor::from_array(batch_tensor)
-            .map_err(|e| OcrError::InferenceFailed(format!("Batch tensor: {}", e)))?;
+        const MAX_BATCH_CHUNK: usize = 16;
+        let mut results_with_index: Vec<(usize, OcrText)> = Vec::with_capacity(items.len());
 
-        let mut session_guard = self.session.lock();
-        let outputs = session_guard
-            .run(ort::inputs!["x" => input_tensor])
-            .map_err(|e| OcrError::InferenceFailed(format!("Batch recognition: {}", e)))?;
+        for chunk in items.chunks(MAX_BATCH_CHUNK) {
+            let chunk_crops: Vec<RgbImage> = chunk.iter().map(|it| it.crop.clone()).collect();
+            let (batch_tensor, target_widths) = preprocess_recognition_batch(&chunk_crops);
 
-        let output_val = outputs
-            .iter()
-            .next()
-            .map(|(_, v)| v)
-            .ok_or_else(|| OcrError::InferenceFailed("Empty batch output".to_string()))?;
+            let input_tensor = match Tensor::from_array(batch_tensor) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Batch tensor creation failed: {}, falling back to sequential", e);
+                    for it in chunk {
+                        if let Some(ocr_text) = self.recognize_region(img, &regions[it.valid_idx])? {
+                            results_with_index.push((it.valid_idx, ocr_text));
+                        }
+                    }
+                    continue;
+                }
+            };
 
-        let pred_view = output_val
-            .try_extract_array::<f32>()
-            .map_err(|e| OcrError::InferenceFailed(format!("Extract batch array: {}", e)))?;
+            let (shape, raw_vec) = {
+                let mut session_guard = self.session.lock();
+                let res = match session_guard.run(ort::inputs!["x" => input_tensor]) {
+                    Ok(outputs) => {
+                        if let Some((_, output_val)) = outputs.iter().next() {
+                            if let Ok(pred_view) = output_val.try_extract_array::<f32>() {
+                                (pred_view.shape().to_vec(), pred_view.as_slice().unwrap_or(&[]).to_vec())
+                            } else {
+                                (Vec::new(), Vec::new())
+                            }
+                        } else {
+                            (Vec::new(), Vec::new())
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Batch recognition inference failed: {}", e);
+                        (Vec::new(), Vec::new())
+                    }
+                };
+                res
+            };
 
-        let shape = pred_view.shape();
+            if shape.len() != 3 {
+                for it in chunk {
+                    if let Some(ocr_text) = self.recognize_region(img, &regions[it.valid_idx])? {
+                        results_with_index.push((it.valid_idx, ocr_text));
+                    }
+                }
+                continue;
+            }
 
-        if shape.len() != 3 {
-            drop(outputs);
-            drop(session_guard);
-            tracing::debug!("Model doesn't support batch inference, falling back to sequential");
-            let mut results = Vec::new();
-            for &idx in &valid_indices {
-                if let Some(ocr_text) = self.recognize_region(img, &regions[idx])? {
-                    results.push(ocr_text);
+            let batch_size = shape[0];
+            let seq_len = shape[1];
+            let num_classes = shape[2];
+            let per_item = seq_len * num_classes;
+            let max_w = *target_widths.iter().max().unwrap_or(&16) as f32;
+
+            for b in 0..batch_size.min(chunk.len()) {
+                let offset = b * per_item;
+                if offset + per_item > raw_vec.len() {
+                    break;
+                }
+                let item_slice = &raw_vec[offset..offset + per_item];
+                let tw = target_widths[b] as f32;
+
+                let effective_seq_len = (((tw / max_w) * seq_len as f32).ceil() as usize + 2).min(seq_len);
+                let (text, confidence) = self.decode_ctc(item_slice, effective_seq_len, num_classes);
+
+                if !text.is_empty() && confidence >= self.rec_threshold {
+                    results_with_index.push((
+                        chunk[b].valid_idx,
+                        OcrText::new(text, confidence, regions[chunk[b].valid_idx].clone()),
+                    ));
                 }
             }
-            return Ok(results);
         }
 
-        let batch_size = shape[0];
-        let seq_len = shape[1];
-        let num_classes = shape[2];
-        let raw_slice = pred_view.as_slice().unwrap_or(&[]);
-        let per_item = seq_len * num_classes;
-
-        let mut results = Vec::with_capacity(batch_size);
-
-        for b in 0..batch_size.min(valid_indices.len()) {
-            let offset = b * per_item;
-            let item_slice = &raw_slice[offset..offset + per_item];
-
-            let (text, confidence) = self.decode_ctc(item_slice, seq_len, num_classes);
-
-            if !text.is_empty() && confidence >= self.rec_threshold {
-                results.push(OcrText::new(
-                    text,
-                    confidence,
-                    regions[valid_indices[b]].clone(),
-                ));
-            }
-        }
+        // Restore original region order
+        results_with_index.sort_by_key(|(orig_idx, _)| *orig_idx);
+        let results = results_with_index.into_iter().map(|(_, text)| text).collect();
 
         Ok(results)
     }
 
     pub fn crop_region(&self, img: &DynamicImage, region: &TextRegion) -> Option<RgbImage> {
+        if region.polygon.len() >= 4 {
+            let p0 = region.polygon[0];
+            let p1 = region.polygon[1];
+            let dx = p1.x - p0.x;
+            let dy = p1.y - p0.y;
+            let angle_deg = dy.atan2(dx).to_degrees();
+            if angle_deg.abs() >= 1.5 && angle_deg.abs() <= 45.0 {
+                if let Some(oriented) = crate::orientation::extract_oriented_crop(img, &region.polygon) {
+                    return Some(oriented);
+                }
+            }
+        }
+
         let (min_x, min_y, max_x, max_y) = region.aabb();
         let (img_w, img_h) = (img.width() as f32, img.height() as f32);
         let region_h = (max_y - min_y).max(1.0);

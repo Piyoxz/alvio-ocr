@@ -136,6 +136,9 @@ pub struct OcrConfig {
     pub pdfium_path: Option<PathBuf>,
     pub max_pdf_pages: usize,
     pub pdf_embedded_img_min_area: u32,
+
+    pub cache_enabled: bool,
+    pub cache_capacity: usize,
 }
 
 impl Default for OcrConfig {
@@ -202,7 +205,20 @@ impl OcrConfig {
             pdfium_path: None,
             max_pdf_pages: 50,
             pdf_embedded_img_min_area: 10_000,
+
+            cache_enabled: true,
+            cache_capacity: 64,
         }
+    }
+
+    pub fn with_cache(mut self, enabled: bool) -> Self {
+        self.cache_enabled = enabled;
+        self
+    }
+
+    pub fn with_cache_capacity(mut self, capacity: usize) -> Self {
+        self.cache_capacity = capacity;
+        self
     }
 
     pub fn default_with_language(model_dir: impl Into<PathBuf>, lang: OcrLanguage) -> Self {

@@ -30,6 +30,7 @@ pub struct OcrEngine {
     config: Arc<OcrConfig>,
     #[cfg(feature = "pdf")]
     pdf_processor: Option<Arc<PdfProcessor>>,
+    cache: parking_lot::Mutex<std::collections::HashMap<[u8; 32], OcrResult>>,
 }
 
 impl OcrEngine {
@@ -87,9 +88,14 @@ impl OcrEngine {
             config,
             #[cfg(feature = "pdf")]
             pdf_processor,
+            cache: parking_lot::Mutex::new(std::collections::HashMap::new()),
         };
         let _ = engine.warmup();
         Ok(engine)
+    }
+
+    pub fn clear_cache(&self) {
+        self.cache.lock().clear();
     }
 
     pub fn warmup(&self) -> Result<(), OcrError> {
@@ -233,9 +239,23 @@ impl OcrEngine {
             )));
         }
 
+        let cache_hash: Option<[u8; 32]> = if self.config.cache_enabled {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            let h: [u8; 32] = hasher.finalize().into();
+            if let Some(cached) = self.cache.lock().get(&h) {
+                tracing::debug!("OcrEngine cache hit for document hash");
+                return Ok(cached.clone());
+            }
+            Some(h)
+        } else {
+            None
+        };
+
         let format = detect_format(bytes)?;
 
-        match format {
+        let result: Result<OcrResult, OcrError> = match format {
             DocumentFormat::Pdf => {
                 #[cfg(feature = "pdf")]
                 {
@@ -306,7 +326,19 @@ impl OcrEngine {
                 res.duration_ms = res.timing.total_ms.round() as u64;
                 Ok(res)
             }
+        };
+
+        if let (Some(h), Ok(res)) = (cache_hash, &result) {
+            let mut guard = self.cache.lock();
+            if guard.len() >= self.config.cache_capacity {
+                if let Some(old_key) = guard.keys().next().copied() {
+                    guard.remove(&old_key);
+                }
+            }
+            guard.insert(h, res.clone());
         }
+
+        result
     }
 
     pub fn recognize_image(&self, img: &DynamicImage) -> Result<OcrResult, OcrError> {

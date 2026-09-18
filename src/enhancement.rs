@@ -122,6 +122,47 @@ fn unsharp_mask(img: &RgbImage, strength: f32) -> RgbImage {
     })
 }
 
+pub fn remove_shadows(img: &RgbImage) -> RgbImage {
+    let (w, h) = img.dimensions();
+    if w < 16 || h < 16 {
+        return img.clone();
+    }
+
+    let gray = DynamicImage::ImageRgb8(img.clone()).to_luma8();
+    let dw = (w / 8).max(4);
+    let dh = (h / 8).max(4);
+
+    let down_gray = image::imageops::resize(&gray, dw, dh, image::imageops::FilterType::Triangle);
+    let bg_down = box_blur_3x3(&box_blur_3x3(&down_gray));
+    let bg = image::imageops::resize(&bg_down, w, h, image::imageops::FilterType::Triangle);
+
+    ImageBuffer::from_fn(w, h, |x, y| {
+        let Rgb([r, g, b]) = *img.get_pixel(x, y);
+        let bg_val = bg.get_pixel(x, y).0[0].max(10) as f32;
+        let factor = 220.0 / bg_val;
+
+        let nr = ((r as f32) * factor).clamp(0.0, 255.0) as u8;
+        let ng = ((g as f32) * factor).clamp(0.0, 255.0) as u8;
+        let nb = ((b as f32) * factor).clamp(0.0, 255.0) as u8;
+        Rgb([nr, ng, nb])
+    })
+}
+
+pub fn adaptive_threshold(gray: &GrayImage, c_offset: i32) -> GrayImage {
+    let (w, h) = gray.dimensions();
+    let blurred = box_blur_3x3(gray);
+
+    ImageBuffer::from_fn(w, h, |x, y| {
+        let val = gray.get_pixel(x, y).0[0] as i32;
+        let mean = blurred.get_pixel(x, y).0[0] as i32;
+        if val > mean - c_offset {
+            image::Luma([255u8])
+        } else {
+            image::Luma([0u8])
+        }
+    })
+}
+
 use std::borrow::Cow;
 
 pub fn enhance_if_needed<'a>(img: &'a DynamicImage, variance_threshold: f32) -> Cow<'a, DynamicImage> {

@@ -270,3 +270,101 @@ fn test_stage_timing_on_real_image() {
     }
 }
 
+#[test]
+fn test_npwp_extraction() {
+    let text = "KEMENTERIAN KEUANGAN REPUBLIK INDONESIA\nDIREKTORAT JENDERAL PAJAK\nNPWP : 01.234.567.8-901.000\nNAMA : PT MAJU BERSAMA JAYA\nNIK : 3171012345670001\nALAMAT : JL. JENDERAL SUDIRMAN NO. 45\nKPP PRATAMA JAKARTA SETIABUDI SATU\nTERDAFTAR : 15/01/2020";
+    let npwp = alvio_ocr::extract_npwp(text);
+    assert!(npwp.is_valid());
+    assert_eq!(npwp.npwp_raw, Some("012345678901000".to_string()));
+    assert_eq!(npwp.npwp, Some("01.234.567.8-901.000".to_string()));
+    assert_eq!(npwp.nama, Some("PT MAJU BERSAMA JAYA".to_string()));
+    assert_eq!(npwp.nik, Some("3171012345670001".to_string()));
+    assert!(npwp.alamat.unwrap().contains("SUDIRMAN"));
+    assert_eq!(npwp.kpp, Some("PRATAMA JAKARTA SETIABUDI SATU".to_string()));
+}
+
+#[test]
+fn test_sim_extraction() {
+    let text = "KEPOLISIAN NEGARA REPUBLIK INDONESIA\nSURAT IZIN MENGEMUDI (SIM A)\nNO SIM : 920112345678\n1. NAMA : BUDI PRASETYO\n2. TEMPAT/TGL LAHIR : JAKARTA, 12-08-1995\nPRIA\n4. ALAMAT : JL. KEMANG RAYA NO 10\nRT/RW 002/005 KEL. BANGKA\n5. PEKERJAAN : KARYAWAN SWASTA\nBERLAKU S/D : 12-08-2028";
+    let sim = alvio_ocr::extract_sim(text);
+    assert!(sim.is_valid());
+    assert_eq!(sim.golongan, Some("A".to_string()));
+    assert_eq!(sim.nomor_sim, Some("920112345678".to_string()));
+    assert_eq!(sim.nama, Some("BUDI PRASETYO".to_string()));
+    assert_eq!(sim.jenis_kelamin, Some("LAKI-LAKI".to_string()));
+    assert_eq!(sim.berlaku_hingga, Some("12-08-2028".to_string()));
+}
+
+#[test]
+fn test_entity_extraction() {
+    let text = "Hubungi customer care di +62 812 3456 7890 atau email contact@alvio.test.\nTotal transaksi Rp 750.000,- dibayar pada 17 September 2026.\nKendaraan ekspedisi B 1234 XYZ dengan NIK kurir 3171234567890001.\nWebsite: https://alvio-ocr.dev";
+    let entities = alvio_ocr::extract_entities(text);
+    assert!(!entities.is_empty());
+    assert!(entities.phone_numbers.iter().any(|p| p.contains("812 3456 7890")));
+    assert!(entities.emails.contains(&"contact@alvio.test".to_string()));
+    assert!(entities.amounts.iter().any(|a| a.contains("750.000")));
+    assert!(entities.dates.iter().any(|d| d.contains("17 September 2026")));
+    assert!(entities.vehicle_plates.contains(&"B 1234 XYZ".to_string()));
+    assert!(entities.niks.contains(&"3171234567890001".to_string()));
+    assert!(entities.urls.contains(&"https://alvio-ocr.dev".to_string()));
+}
+
+#[test]
+fn test_searchable_pdf_and_visualization() {
+    let engine = OcrEngine::auto().expect("Engine auto");
+    let sample_image = "D:/riset_alvio/ocr/tests/fixtures/ocr/simple.jpg";
+    if Path::new(sample_image).exists() {
+        let img = image::open(sample_image).expect("Open sample");
+        let res = engine.recognize_file(sample_image).expect("OCR result");
+
+        // Searchable PDF
+        let pdf_bytes = res.to_searchable_pdf(&img).expect("Generate PDF");
+        assert!(!pdf_bytes.is_empty());
+        assert!(pdf_bytes.starts_with(b"%PDF-1.4"));
+        let pdf_str = String::from_utf8_lossy(&pdf_bytes);
+        assert!(pdf_str.contains("/Type /Catalog"));
+        assert!(pdf_str.contains("3 Tr"));
+        assert!(pdf_str.contains("JAKARTA") || pdf_str.contains("PROVINSI"));
+
+        // Annotated Image
+        let annotated = res.to_annotated_image(&img);
+        assert_eq!(annotated.width(), img.width());
+        assert_eq!(annotated.height(), img.height());
+
+        // hOCR
+        let hocr = res.to_hocr();
+        assert!(hocr.contains("<div class='ocr_page'"));
+        assert!(hocr.contains("ocrx_word"));
+
+        // Table CSV
+        let table = res.to_table();
+        let csv = table.to_csv();
+        assert!(!csv.is_empty() || table.rows.is_empty());
+    }
+}
+
+#[test]
+fn test_document_hash_cache() {
+    let config = alvio_ocr::OcrConfig::default().with_cache(true);
+    let engine = OcrEngine::with_config(config).expect("Engine with cache");
+    let sample_image = "D:/riset_alvio/ocr/tests/fixtures/ocr/simple.jpg";
+    if Path::new(sample_image).exists() {
+        let bytes = std::fs::read(sample_image).expect("Read image");
+
+        let start1 = std::time::Instant::now();
+        let res1 = engine.recognize_bytes(&bytes).expect("First OCR");
+        let dur1 = start1.elapsed();
+
+        let start2 = std::time::Instant::now();
+        let res2 = engine.recognize_bytes(&bytes).expect("Second OCR");
+        let dur2 = start2.elapsed();
+
+        assert_eq!(res1.text, res2.text);
+        assert!(dur2 < dur1, "Cache hit ({:?}) should be faster than first run ({:?})", dur2, dur1);
+        assert!(dur2.as_millis() < 50, "Cache hit should be near-instantaneous");
+
+        engine.clear_cache();
+    }
+}
+
+

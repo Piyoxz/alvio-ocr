@@ -3,25 +3,27 @@
 High-performance OCR library for Rust, powered by ONNX Runtime and PP-OCRv6. Built for extreme speed, high accuracy, and zero-configuration ergonomics.
 
 > [!NOTE]
-> ### 🚀 What's New in v0.2.3
-> - 📦 **Embedded 18,708-Key Dictionary**: Built-in 50-language PP-OCRv6 dictionary compiled directly into the binary — 100% offline reliability on any fresh machine with zero 404 download errors.
-> - 🛡️ **Production Security Guards**: Built-in guards against DOS and memory exhaustion (`max_file_size`, `max_url_download_size`, `url_timeout_secs`).
-> - ⚡ **Zero-Copy Performance**: `Cow<'a, DynamicImage>` image borrowing, zero-copy FIR resizing, and tuned threadpool returning execution latency to **~85 ms**.
-> - 📄 **Document AI Suite**: Out-of-the-box parsing for e-KTP (`to_ktp()`), Receipts/Invoices (`to_receipt()`), 2D Table grids (`to_table()`), and Key-Values (`to_key_values()`).
-> - 🔄 **Orientation & Deskew**: Automatic skew tilt angle detection (-45° to +45°) and bilinear deskew correction.
-> - ⏱️ **Stage Profiling**: Granular nanosecond `StageTiming` profiler breakdown.
-> - 🌐 **Cross-Platform Hardened**: Verified for Windows, Linux (with `libgomp1`), and macOS (Apple Silicon + Intel).
+> ### 🚀 What's New in v0.3.0
+> - 📄 **Searchable PDF Generator**: `res.to_searchable_pdf(&img)` generates conforming PDF documents with invisible selectable text layers (`3 Tr`) for instant `Ctrl+F` and copy-pasting in Acrobat / Chrome.
+> - 🎨 **Visual Annotator**: `res.to_annotated_image(&img)` renders color-coded bounding boxes with confidence levels directly onto the original image.
+> - 🇮🇩 **Document AI Expansion**: Built-in support for Indonesian NPWP (`to_npwp()`), SIM (`to_sim()`), and Universal Entity Extractor (`to_entities()`) for phone numbers, emails, dates, plate numbers, and currency.
+> - ⚡ **Aspect-Ratio Bucketed Batching**: 60-70% less tensor padding in SVTR recognition, boosting batch throughput.
+> - ⚡ **In-Memory Document Hash Cache**: Content-addressable SHA-256 caching delivering **sub-millisecond (< 0.25 ms)** repeat OCR responses.
+> - 📐 **Rotated Oriented Polygons**: Accurate contour-moment based tilt detection and bilinear quad unwarping (`extract_oriented_crop`).
+> - 📊 **Table CSV & hOCR Format**: Direct `to_csv()` and standard W3C `to_hocr()` export.
+> - 💻 **Standalone CLI**: Built-in `alvio-ocr` binary for instant terminal usage.
 
 ## Key Features
 
-- **Document AI Intelligent Schemas**: Out-of-the-box parsing for ID cards (KTP with NIK typo fix), Receipts/Invoices, tabular Markdown grids, and form Key-Value pairs.
-- **Orientation & Skew Correction**: Automatically detects text skew angles and deskews pages prior to DBNet detection.
-- **Blazing Fast**: PP-OCRv6 engine with SIMD-accelerated resizing (AVX2/NEON), single-pass batch inference, and Rayon parallel pipeline.
+- **Document AI Intelligent Schemas**: Out-of-the-box parsing for ID cards (KTP, SIM), Tax cards (NPWP), Receipts/Invoices, tabular Markdown/CSV grids, Form Key-Values, and Universal Entities.
+- **Searchable PDF & Visualizer**: Export searchable PDFs with invisible text layer or annotated preview images.
+- **Orientation & Skew Correction**: Automatically detects rotated text angles and deskews pages / crops with bilinear interpolation.
+- **Blazing Fast**: PP-OCRv6 engine with aspect-ratio bucketing, dynamic chunking, SIMD-accelerated resizing (AVX2/NEON), and Rayon parallel pipeline.
 - **Zero-Panic Guarantee**: All operations return `Result<T, OcrError>` with graceful degradation and safe buffer math.
 - **Universal Input**: Recognize text directly from local file paths, web URLs (`http://`, `https://`), raw memory bytes, or decoded images.
 - **Multi-File Batching**: Process dozens or hundreds of files in parallel across CPU threads with automatic workload balancing.
 - **Zero Configuration**: Missing ONNX models and native runtime libraries (Pdfium) are automatically downloaded to user cache on first run.
-- **Rich Structured Output**: Returns text, confidence, structured reading lines, bounding boxes, TSV, JSON, KTP, Table, and Receipt schemas.
+- **Rich Structured Output**: Returns text, confidence, structured reading lines, bounding boxes, TSV, JSON, hOCR, KTP, SIM, NPWP, Table, and Receipt schemas.
 - **Multi-Language Support**: Unified PP-OCRv6 model supports 50 languages without switching models.
 
 ## Installation
@@ -30,14 +32,14 @@ Add this crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-alvio-ocr = "0.2.3"
+alvio-ocr = "0.3.0"
 ```
 
 To enable PDF document OCR, enable the `pdf` feature:
 
 ```toml
 [dependencies]
-alvio-ocr = { version = "0.2.3", features = ["pdf"] }
+alvio-ocr = { version = "0.3.0", features = ["pdf"] }
 ```
 
 ## Supported File Formats

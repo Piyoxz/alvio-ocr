@@ -13,7 +13,9 @@ pub mod preprocessing;
 pub mod profiling;
 pub mod recognizer;
 pub mod schema;
+pub mod searchable_pdf;
 pub mod types;
+pub mod visualization;
 
 #[cfg(feature = "pdf")]
 pub mod pdf;
@@ -24,13 +26,16 @@ pub use document::{
 };
 pub use engine::OcrEngine;
 pub use error::{OcrError, Result};
-pub use orientation::{deskew_image, detect_skew_angle, PageOrientation};
+pub use orientation::{deskew_image, deskew_rgb, detect_skew_angle, extract_oriented_crop, PageOrientation};
 pub use profiling::{compute_cer, compute_wer, PercentileStats, StageTiming};
 pub use schema::{
-    extract_key_values, extract_ktp, extract_receipt, reconstruct_table, KeyValuePair, KtpData,
-    ReceiptData, ReceiptItem, TableCell, TableData,
+    extract_entities, extract_key_values, extract_ktp, extract_npwp, extract_receipt, extract_sim,
+    reconstruct_table, ExtractedEntities, KeyValuePair, KtpData, NpwpData, ReceiptData,
+    ReceiptItem, SimData, TableCell, TableData,
 };
+pub use searchable_pdf::create_searchable_pdf;
 pub use types::{
     BatchItem, BatchResult, BoundingBox, DocumentFormat, OcrResult, OcrText, PageResult, PdfResult,
     Point, RecognitionResult, TextLine, TextRegion, TextSource,
 };
+pub use visualization::annotate_image;
